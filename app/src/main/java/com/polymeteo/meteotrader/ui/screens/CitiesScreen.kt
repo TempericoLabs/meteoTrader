@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.polymeteo.meteotrader.data.model.CityWeatherData
@@ -129,7 +130,9 @@ private fun HeaderBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .statusBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .padding(top = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -192,17 +195,17 @@ private fun CitiesGrid(
 private fun CityCard(
     data: CityWeatherData,
     modifier: Modifier = Modifier
-    ) {
-        val current = data.metarCurrentInUnit()
-        val delta = data.metarDeltaInUnit()
-        val control = data.controlTempInUnit()
-        val poly = data.polyTempInUnit()
-        val topTrader = data.polymarket.topOpportunity
+ ) {
+    val current = data.metarCurrentInUnit()
+    val delta = data.metarDeltaInUnit()
+    val control = data.controlTempInUnit()
+    val poly = data.polyTempInUnit()
+    val topTrader = data.polymarket.topOpportunity
 
-        val deltaColor = when {
-            delta == null -> Neutral
-            delta > 0 -> Positive
-            delta < 0 -> Negative
+    val deltaColor = when {
+        delta == null -> Neutral
+        delta > 0 -> Positive
+        delta < 0 -> Negative
         else -> Neutral
     }
 
@@ -210,7 +213,8 @@ private fun CityCard(
         modifier = modifier
             .background(DarkPanel)
             .border(width = 1.dp, color = Color(0x33FFFFFF))
-            .padding(8.dp)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -221,7 +225,9 @@ private fun CityCard(
                 text = data.city.name,
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
             )
             Text(
                 text = data.localTime,
@@ -231,45 +237,28 @@ private fun CityCard(
         }
 
         Row(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = formatTemperature(current, data.city.displayUnit, digits = 0),
-                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                color = MaterialTheme.colorScheme.onSurface
-            )
-
-            Box(
-                modifier = Modifier
-                    .padding(start = 8.dp)
-                    .background(deltaColor.copy(alpha = 0.15f))
-                    .border(1.dp, deltaColor)
-                    .padding(horizontal = 6.dp, vertical = 3.dp)
-            ) {
-                Text(
-                    text = formatDelta(delta, data.city.displayUnit),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = deltaColor
-                )
-            }
-        }
-
-        Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            StatValue(
-                label = "Station",
-                value = formatTemperature(control, data.city.displayUnit),
+            InlineMetric(
+                label = "M",
+                value = formatTemperature(current, data.city.displayUnit, digits = 0),
                 modifier = Modifier.weight(1f)
             )
-            Box(modifier = Modifier.width(8.dp))
-            StatValue(
-                label = "PolyTEMP",
-                value = formatTemperature(poly, data.city.displayUnit),
+            InlineMetric(
+                label = "Δ",
+                value = formatDelta(delta, data.city.displayUnit),
+                valueColor = deltaColor,
+                modifier = Modifier.weight(1f)
+            )
+            InlineMetric(
+                label = "S",
+                value = formatTemperature(control, data.city.displayUnit, digits = 0),
+                modifier = Modifier.weight(1f)
+            )
+            InlineMetric(
+                label = "P",
+                value = formatTemperature(poly, data.city.displayUnit, digits = 0),
                 modifier = Modifier.weight(1f)
             )
         }
@@ -283,22 +272,26 @@ private fun CityCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp)
                     .background(traderColor.copy(alpha = 0.12f))
                     .border(1.dp, traderColor)
-                    .padding(horizontal = 6.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = directionLabel(topTrader.direction),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = traderColor
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = traderColor,
+                    maxLines = 1
                 )
                 Text(
                     text = "${topTrader.recommendedBuy} ${formatPercent(topTrader.expectedEdge)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = traderColor
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = traderColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.weight(1f)
                 )
             }
         }
@@ -306,21 +299,29 @@ private fun CityCard(
 }
 
 @Composable
-private fun StatValue(
+private fun InlineMetric(
     label: String,
     value: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    valueColor: Color = MaterialTheme.colorScheme.onSurface
 ) {
-    Column(modifier = modifier) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = MutedInk
+            color = MutedInk,
+            maxLines = 1
         )
         Text(
             text = value,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+            color = valueColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
