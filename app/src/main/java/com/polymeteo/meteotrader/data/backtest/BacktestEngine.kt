@@ -35,6 +35,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 import java.util.Locale
+import java.security.MessageDigest
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.max
@@ -167,6 +168,13 @@ class BacktestEngine(
             noPrice = opportunity.noPrice.coerceIn(0.001, 0.999),
             modelProbabilityYes = opportunity.modelProbabilityYes.coerceIn(0.001, 0.999),
             expectedEdge = opportunity.expectedEdge,
+            rawEdge = opportunity.rawEdge,
+            executableEdge = opportunity.executableEdge,
+            fillProbabilityEstimate = opportunity.fillProbability,
+            feeCostEstimate = opportunity.feeCost,
+            spreadCostEstimate = opportunity.spreadCost,
+            liquidityCostEstimate = opportunity.liquidityCost,
+            totalCostEstimate = opportunity.totalCost,
             recommendedBuy = recommendedBuy,
             direction = opportunity.direction,
             signal = opportunity.signal,
@@ -245,6 +253,8 @@ class BacktestEngine(
                     noPrice = selected.noPrice,
                     modelProbabilityYes = selected.modelProbabilityYes,
                     expectedEdge = selected.expectedEdge,
+                    rawEdge = selected.expectedEdge,
+                    executableEdge = selected.expectedEdge,
                     recommendedBuy = selected.recommendedBuy,
                     direction = selected.direction,
                     signal = selected.signal,
@@ -544,12 +554,19 @@ class BacktestEngine(
                     upperThreshold = record.upperThreshold,
                     observed = observed
                 )
-                val evaluation = BacktestMath.evaluateTrade(
+                val fillDraw = stableDraw(record.id, "entry-fill")
+                val evaluation = BacktestMath.evaluatePaperTrade(
                     recommendedBuy = record.recommendedBuy,
                     yesPrice = record.yesPrice,
                     noPrice = record.noPrice,
                     modelProbabilityYes = record.modelProbabilityYes,
-                    actualYes = actualYes
+                    actualYes = actualYes,
+                    expectedEdge = record.executableEdge ?: record.expectedEdge,
+                    fillProbabilityEstimate = record.fillProbabilityEstimate,
+                    spread = record.spread,
+                    liquidity = record.liquidity,
+                    volume24h = record.volume24h,
+                    fillDraw = fillDraw
                 )
 
                 recordsById[id] = record.copy(
@@ -558,6 +575,15 @@ class BacktestEngine(
                     settlementSourceUrl = sourceUrl,
                     observedMaxInConditionUnit = observed,
                     actualYesOutcome = actualYes,
+                    executed = evaluation.executed,
+                    expectedPnlUnits = evaluation.expectedPnlUnits,
+                    executionGapUnits = evaluation.executionGapUnits,
+                    fillProbabilityUsed = evaluation.fillProbabilityUsed,
+                    fillDraw = evaluation.fillDraw,
+                    entryPriceUnits = evaluation.entryPriceUnits,
+                    entryFeeUnits = evaluation.entryFeeUnits,
+                    entrySlippageUnits = evaluation.entrySlippageUnits,
+                    exitPayoutUnits = evaluation.exitPayoutUnits,
                     pnlUnits = evaluation.pnlUnits,
                     stakeUnits = evaluation.stakeUnits,
                     brierScore = evaluation.brierScore,
@@ -601,8 +627,6 @@ class BacktestEngine(
         val now = nowProvider()
         val settled = records.filter {
             it.settled &&
-                it.pnlUnits != null &&
-                it.stakeUnits != null &&
                 it.actualYesOutcome != null
         }
 
@@ -610,49 +634,77 @@ class BacktestEngine(
         val historicalTrades = records.size - liveTrades
         val settledLiveTrades = settled.count { !it.isHistoricalSeed }
         val settledHistoricalTrades = settled.size - settledLiveTrades
+        val executedSettled = settled.filter { it.isExecutedTrade() }
+        val executedLiveTrades = executedSettled.count { !it.isHistoricalSeed }
+        val executedHistoricalTrades = executedSettled.size - executedLiveTrades
+        val skippedByFill = settled.size - executedSettled.size
 
-        val totalStake = settled.sumOf { it.stakeUnits ?: 0.0 }
+        val totalStake = executedSettled.sumOf { it.stakeUnits ?: 0.0 }
         val totalPnl = settled.sumOf { it.pnlUnits ?: 0.0 }
+        val expectedPnl = settled.sumOf { it.expectedPnlOrFallback() }
+        val executionGap = settled.sumOf { it.executionGapOrFallback() }
         val settledCount = settled.size
-        val hitCount = settled.count { didHit(it) }
+        val executedCount = executedSettled.size
+        val hitCount = executedSettled.count { didHit(it) }
         val brierScore = settled.mapNotNull { it.brierScore }.averageOrNull()
         val logLoss = settled.mapNotNull { it.logLoss }.averageOrNull()
         val avgEdge = settled.map { it.expectedEdge }.averageOrNull()
+        val fillRate = if (settledCount > 0) executedCount.toDouble() / settledCount.toDouble() else null
 
         val cityStats = settled
             .groupBy { it.cityId }
             .map { (cityId, cityRecords) ->
-                val stake = cityRecords.sumOf { it.stakeUnits ?: 0.0 }
+                val executedCityRecords = cityRecords.filter { it.isExecutedTrade() }
+                val stake = executedCityRecords.sumOf { it.stakeUnits ?: 0.0 }
                 val pnl = cityRecords.sumOf { it.pnlUnits ?: 0.0 }
+                val expected = cityRecords.sumOf { it.expectedPnlOrFallback() }
+                val gap = cityRecords.sumOf { it.executionGapOrFallback() }
+                val executedCityCount = executedCityRecords.size
                 BacktestCityStat(
                     cityId = cityId,
                     cityName = cityRecords.firstOrNull()?.cityName ?: cityId,
                     settledTrades = cityRecords.size,
+                    executedTrades = executedCityCount,
+                    fillRate = if (cityRecords.isNotEmpty()) executedCityCount.toDouble() / cityRecords.size.toDouble() else null,
                     hitRate = cityRecords.hitRate(),
                     totalPnlUnits = pnl,
+                    expectedPnlUnits = expected,
+                    executionGapUnits = gap,
                     roi = if (stake > 0.0) pnl / stake else null,
                     avgExpectedEdge = cityRecords.map { it.expectedEdge }.averageOrNull(),
                     brierScore = cityRecords.mapNotNull { it.brierScore }.averageOrNull()
                 )
             }
-            .sortedWith(compareByDescending<BacktestCityStat> { it.totalPnlUnits }.thenByDescending { it.settledTrades })
+            .sortedWith(compareByDescending<BacktestCityStat> { it.totalPnlUnits }.thenByDescending { it.executedTrades })
 
         val strategyStats = settled
             .groupBy { it.direction to it.signal }
             .map { (key, strategyRecords) ->
-                val stake = strategyRecords.sumOf { it.stakeUnits ?: 0.0 }
+                val executedStrategyRecords = strategyRecords.filter { it.isExecutedTrade() }
+                val stake = executedStrategyRecords.sumOf { it.stakeUnits ?: 0.0 }
                 val pnl = strategyRecords.sumOf { it.pnlUnits ?: 0.0 }
+                val expected = strategyRecords.sumOf { it.expectedPnlOrFallback() }
+                val gap = strategyRecords.sumOf { it.executionGapOrFallback() }
+                val executedStrategyCount = executedStrategyRecords.size
                 BacktestStrategyStat(
                     direction = key.first,
                     signal = key.second,
                     settledTrades = strategyRecords.size,
+                    executedTrades = executedStrategyCount,
+                    fillRate = if (strategyRecords.isNotEmpty()) {
+                        executedStrategyCount.toDouble() / strategyRecords.size.toDouble()
+                    } else {
+                        null
+                    },
                     hitRate = strategyRecords.hitRate(),
                     totalPnlUnits = pnl,
+                    expectedPnlUnits = expected,
+                    executionGapUnits = gap,
                     roi = if (stake > 0.0) pnl / stake else null,
                     avgExpectedEdge = strategyRecords.map { it.expectedEdge }.averageOrNull()
                 )
             }
-            .sortedWith(compareByDescending<BacktestStrategyStat> { it.totalPnlUnits }.thenByDescending { it.settledTrades })
+            .sortedWith(compareByDescending<BacktestStrategyStat> { it.totalPnlUnits }.thenByDescending { it.executedTrades })
 
         val recentSettlements = settled
             .sortedByDescending { it.settledEpochMs ?: it.snapshotEpochMs }
@@ -668,7 +720,10 @@ class BacktestEngine(
                     recommendedBuy = record.recommendedBuy,
                     direction = record.direction,
                     signal = record.signal,
+                    executed = record.isExecutedTrade(),
                     pnlUnits = record.pnlUnits ?: 0.0,
+                    expectedPnlUnits = record.expectedPnlOrFallback(),
+                    executionGapUnits = record.executionGapOrFallback(),
                     hit = didHit(record),
                     expectedEdge = record.expectedEdge,
                     observedMaxInConditionUnit = record.observedMaxInConditionUnit,
@@ -686,12 +741,22 @@ class BacktestEngine(
             settledTrades = settledCount,
             settledLiveTrades = settledLiveTrades,
             settledHistoricalTrades = settledHistoricalTrades,
+            simulatedTrades = settledCount,
+            simulatedLiveTrades = settledLiveTrades,
+            simulatedHistoricalTrades = settledHistoricalTrades,
+            executedTrades = executedCount,
+            executedLiveTrades = executedLiveTrades,
+            executedHistoricalTrades = executedHistoricalTrades,
+            skippedByFillTrades = skippedByFill,
             pendingTrades = records.size - settledCount,
+            fillRate = fillRate,
             totalStakeUnits = totalStake,
             totalPnlUnits = totalPnl,
-            avgPnlUnits = if (settledCount > 0) totalPnl / settledCount else null,
+            expectedPnlUnits = expectedPnl,
+            executionGapUnits = executionGap,
+            avgPnlUnits = if (executedCount > 0) totalPnl / executedCount else null,
             roi = if (totalStake > 0.0) totalPnl / totalStake else null,
-            hitRate = if (settledCount > 0) hitCount.toDouble() / settledCount.toDouble() else null,
+            hitRate = if (executedCount > 0) hitCount.toDouble() / executedCount.toDouble() else null,
             avgExpectedEdge = avgEdge,
             brierScore = brierScore,
             logLoss = logLoss,
@@ -703,14 +768,28 @@ class BacktestEngine(
     }
 
     private fun didHit(record: BacktestRecord): Boolean {
+        if (!record.isExecutedTrade()) return false
         val actualYes = record.actualYesOutcome ?: return false
         return BacktestMath.didHit(record.recommendedBuy, actualYes)
     }
 
     private fun List<BacktestRecord>.hitRate(): Double? {
-        if (isEmpty()) return null
-        val hits = count { didHit(it) }
-        return hits.toDouble() / size.toDouble()
+        val executed = filter { it.isExecutedTrade() }
+        if (executed.isEmpty()) return null
+        val hits = executed.count { didHit(it) }
+        return hits.toDouble() / executed.size.toDouble()
+    }
+
+    private fun BacktestRecord.expectedPnlOrFallback(): Double {
+        return expectedPnlUnits ?: expectedEdge
+    }
+
+    private fun BacktestRecord.executionGapOrFallback(): Double {
+        return executionGapUnits ?: ((pnlUnits ?: 0.0) - expectedPnlOrFallback())
+    }
+
+    private fun BacktestRecord.isExecutedTrade(): Boolean {
+        return executed && pnlUnits != null && stakeUnits != null
     }
 
     private fun List<Double>.averageOrNull(): Double? {
@@ -722,6 +801,15 @@ class BacktestEngine(
         val bucketMs = minutes * 60L * 1000L
         val epochMs = instant.toEpochMilli()
         return (epochMs / bucketMs) * bucketMs
+    }
+
+    private fun stableDraw(key: String, salt: String): Double {
+        val bytes = MessageDigest.getInstance("SHA-256")
+            .digest("$key|$salt".toByteArray(Charsets.UTF_8))
+        val value = ((bytes[0].toInt() and 0xFF) shl 16) or
+            ((bytes[1].toInt() and 0xFF) shl 8) or
+            (bytes[2].toInt() and 0xFF)
+        return value.toDouble() / 0xFFFFFF.toDouble()
     }
 
     private fun normalCdf(x: Double): Double {

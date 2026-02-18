@@ -63,7 +63,7 @@ fun BacktestScreen(
         containerColor = DarkBase,
         topBar = {
             TopAppBar(
-                title = { Text("Backtesting") },
+                title = { Text("Paper Trading") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -234,15 +234,21 @@ private fun SummaryCard(
                 onHelpRequested = onHelpRequested
             )
             InlineHelpStat(
-                label = "Liquidados",
-                value = report.settledTrades.toString(),
+                label = "Simul.",
+                value = report.simulatedTrades.toString(),
                 topic = BacktestHelpTopic.SETTLED,
                 onHelpRequested = onHelpRequested
             )
             InlineHelpStat(
-                label = "Pendientes",
-                value = report.pendingTrades.toString(),
-                topic = BacktestHelpTopic.PENDING,
+                label = "Exec",
+                value = report.executedTrades.toString(),
+                topic = BacktestHelpTopic.EXECUTED,
+                onHelpRequested = onHelpRequested
+            )
+            InlineHelpStat(
+                label = "NoFill",
+                value = report.skippedByFillTrades.toString(),
+                topic = BacktestHelpTopic.NO_FILL,
                 onHelpRequested = onHelpRequested
             )
         }
@@ -252,18 +258,26 @@ private fun SummaryCard(
         ) {
             InlineHelpStat(
                 label = "Live",
-                value = "${report.liveTrades} (${report.settledLiveTrades})",
+                value = "${report.liveTrades} (${report.simulatedLiveTrades}/${report.executedLiveTrades})",
                 topic = BacktestHelpTopic.LIVE_HIST,
                 onHelpRequested = onHelpRequested
             )
             InlineHelpStat(
                 label = "Hist",
-                value = "${report.historicalTrades} (${report.settledHistoricalTrades})",
+                value = "${report.historicalTrades} (${report.simulatedHistoricalTrades}/${report.executedHistoricalTrades})",
                 topic = BacktestHelpTopic.LIVE_HIST,
                 onHelpRequested = onHelpRequested
             )
+            InlineHelpStat(
+                label = "Fill",
+                value = formatPercent(report.fillRate),
+                topic = BacktestHelpTopic.FILL_RATE,
+                onHelpRequested = onHelpRequested
+            )
         }
-        MetricLine("PnL total", formatUnits(report.totalPnlUnits), pnlColor, BacktestHelpTopic.PNL, onHelpRequested)
+        MetricLine("Expected PnL", formatUnits(report.expectedPnlUnits), MutedInk, BacktestHelpTopic.EXPECTED_PNL, onHelpRequested)
+        MetricLine("Realized PnL", formatUnits(report.totalPnlUnits), pnlColor, BacktestHelpTopic.REALIZED_PNL, onHelpRequested)
+        MetricLine("Gap ejecucion", formatUnits(report.executionGapUnits), pnlColor, BacktestHelpTopic.EXEC_GAP, onHelpRequested)
         MetricLine("Stake total", formatUnits(report.totalStakeUnits), MutedInk, BacktestHelpTopic.STAKE, onHelpRequested)
         MetricLine("ROI", formatPercent(report.roi), MutedInk, BacktestHelpTopic.ROI, onHelpRequested)
         MetricLine("Hit-rate", formatPercent(report.hitRate), MutedInk, BacktestHelpTopic.HIT_RATE, onHelpRequested)
@@ -302,8 +316,8 @@ private fun CityRankingRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             MiniHelpMetric(
-                label = "Trades",
-                value = stat.settledTrades.toString(),
+                label = "Sim/Exec",
+                value = "${stat.settledTrades}/${stat.executedTrades}",
                 topic = BacktestHelpTopic.TRADES,
                 onHelpRequested = onHelpRequested,
                 modifier = Modifier.weight(1f)
@@ -316,9 +330,9 @@ private fun CityRankingRow(
                 modifier = Modifier.weight(1f)
             )
             MiniHelpMetric(
-                label = "ROI",
-                value = formatPercent(stat.roi),
-                topic = BacktestHelpTopic.ROI,
+                label = "Fill",
+                value = formatPercent(stat.fillRate),
+                topic = BacktestHelpTopic.FILL_RATE,
                 onHelpRequested = onHelpRequested,
                 modifier = Modifier.weight(1f)
             )
@@ -330,24 +344,24 @@ private fun CityRankingRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             MiniHelpMetric(
-                label = "PnL",
+                label = "Real",
                 value = formatUnits(stat.totalPnlUnits),
                 valueColor = pnlColor,
-                topic = BacktestHelpTopic.PNL,
+                topic = BacktestHelpTopic.REALIZED_PNL,
                 onHelpRequested = onHelpRequested,
                 modifier = Modifier.weight(1f)
             )
             MiniHelpMetric(
-                label = "Edge",
-                value = formatPercent(stat.avgExpectedEdge),
-                topic = BacktestHelpTopic.AVG_EDGE,
+                label = "Exp",
+                value = formatUnits(stat.expectedPnlUnits),
+                topic = BacktestHelpTopic.EXPECTED_PNL,
                 onHelpRequested = onHelpRequested,
                 modifier = Modifier.weight(1f)
             )
             MiniHelpMetric(
-                label = "Brier",
-                value = formatDecimal(stat.brierScore),
-                topic = BacktestHelpTopic.BRIER,
+                label = "Gap",
+                value = formatUnits(stat.executionGapUnits),
+                topic = BacktestHelpTopic.EXEC_GAP,
                 onHelpRequested = onHelpRequested,
                 modifier = Modifier.weight(1f)
             )
@@ -386,8 +400,8 @@ private fun StrategyRankingRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             MiniHelpMetric(
-                label = "Trades",
-                value = stat.settledTrades.toString(),
+                label = "Sim/Exec",
+                value = "${stat.settledTrades}/${stat.executedTrades}",
                 topic = BacktestHelpTopic.TRADES,
                 onHelpRequested = onHelpRequested,
                 modifier = Modifier.weight(1f)
@@ -400,9 +414,9 @@ private fun StrategyRankingRow(
                 modifier = Modifier.weight(1f)
             )
             MiniHelpMetric(
-                label = "ROI",
-                value = formatPercent(stat.roi),
-                topic = BacktestHelpTopic.ROI,
+                label = "Fill",
+                value = formatPercent(stat.fillRate),
+                topic = BacktestHelpTopic.FILL_RATE,
                 onHelpRequested = onHelpRequested,
                 modifier = Modifier.weight(1f)
             )
@@ -414,24 +428,24 @@ private fun StrategyRankingRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             MiniHelpMetric(
-                label = "PnL",
+                label = "Real",
                 value = formatUnits(stat.totalPnlUnits),
                 valueColor = pnlColor,
-                topic = BacktestHelpTopic.PNL,
+                topic = BacktestHelpTopic.REALIZED_PNL,
                 onHelpRequested = onHelpRequested,
                 modifier = Modifier.weight(1f)
             )
             MiniHelpMetric(
-                label = "Edge",
-                value = formatPercent(stat.avgExpectedEdge),
-                topic = BacktestHelpTopic.AVG_EDGE,
+                label = "Exp",
+                value = formatUnits(stat.expectedPnlUnits),
+                topic = BacktestHelpTopic.EXPECTED_PNL,
                 onHelpRequested = onHelpRequested,
                 modifier = Modifier.weight(1f)
             )
             MiniHelpMetric(
-                label = "Color",
-                value = stat.signal.name,
-                topic = BacktestHelpTopic.COLORS,
+                label = "Gap",
+                value = formatUnits(stat.executionGapUnits),
+                topic = BacktestHelpTopic.EXEC_GAP,
                 onHelpRequested = onHelpRequested,
                 modifier = Modifier.weight(1f)
             )
@@ -497,18 +511,22 @@ private fun RecentSettlementRow(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = "${directionLabel(settlement.direction)} • ${settlement.recommendedBuy}",
+                text = "${directionLabel(settlement.direction)} • ${settlement.recommendedBuy} • ${if (settlement.executed) "EXEC" else "NO-FILL"}",
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                color = if (settlement.hit) Positive else Negative,
+                color = when {
+                    !settlement.executed -> MutedInk
+                    settlement.hit -> Positive
+                    else -> Negative
+                },
                 textDecoration = TextDecoration.Underline,
                 modifier = Modifier.clickable { onHelpRequested(BacktestHelpTopic.DIRECTION_SIGNAL) }
             )
             Text(
-                text = formatUnits(settlement.pnlUnits),
+                text = "Real ${formatUnits(settlement.pnlUnits)}",
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                 color = pnlColor,
                 textDecoration = TextDecoration.Underline,
-                modifier = Modifier.clickable { onHelpRequested(BacktestHelpTopic.PNL) }
+                modifier = Modifier.clickable { onHelpRequested(BacktestHelpTopic.REALIZED_PNL) }
             )
         }
         Row(
@@ -525,16 +543,16 @@ private fun RecentSettlementRow(
                 modifier = Modifier.weight(1f)
             )
             MiniHelpMetric(
-                label = "Edge",
-                value = formatPercent(settlement.expectedEdge),
-                topic = BacktestHelpTopic.AVG_EDGE,
+                label = "Exp",
+                value = formatUnits(settlement.expectedPnlUnits),
+                topic = BacktestHelpTopic.EXPECTED_PNL,
                 onHelpRequested = onHelpRequested,
                 modifier = Modifier.weight(1f)
             )
             MiniHelpMetric(
-                label = "Color",
-                value = if (settlement.hit) "VERDE" else "ROJO",
-                topic = BacktestHelpTopic.COLORS,
+                label = "Gap",
+                value = formatUnits(settlement.executionGapUnits),
+                topic = BacktestHelpTopic.EXEC_GAP,
                 onHelpRequested = onHelpRequested,
                 modifier = Modifier.weight(1f)
             )
@@ -673,18 +691,27 @@ private fun BacktestHelpTerms(onHelpRequested: (BacktestHelpTopic) -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             HelpPill("Trades", BacktestHelpTopic.TRADES, onHelpRequested, Modifier.weight(1f))
-            HelpPill("PnL", BacktestHelpTopic.PNL, onHelpRequested, Modifier.weight(1f))
-            HelpPill("ROI", BacktestHelpTopic.ROI, onHelpRequested, Modifier.weight(1f))
-            HelpPill("Hit", BacktestHelpTopic.HIT_RATE, onHelpRequested, Modifier.weight(1f))
+            HelpPill("Exec", BacktestHelpTopic.EXECUTED, onHelpRequested, Modifier.weight(1f))
+            HelpPill("NoFill", BacktestHelpTopic.NO_FILL, onHelpRequested, Modifier.weight(1f))
+            HelpPill("Fill%", BacktestHelpTopic.FILL_RATE, onHelpRequested, Modifier.weight(1f))
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            HelpPill("ExpPnL", BacktestHelpTopic.EXPECTED_PNL, onHelpRequested, Modifier.weight(1f))
+            HelpPill("RealPnL", BacktestHelpTopic.REALIZED_PNL, onHelpRequested, Modifier.weight(1f))
+            HelpPill("Gap", BacktestHelpTopic.EXEC_GAP, onHelpRequested, Modifier.weight(1f))
+            HelpPill("ROI", BacktestHelpTopic.ROI, onHelpRequested, Modifier.weight(1f))
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            HelpPill("Hit", BacktestHelpTopic.HIT_RATE, onHelpRequested, Modifier.weight(1f))
             HelpPill("Brier", BacktestHelpTopic.BRIER, onHelpRequested, Modifier.weight(1f))
             HelpPill("LogLoss", BacktestHelpTopic.LOG_LOSS, onHelpRequested, Modifier.weight(1f))
             HelpPill("Live/Hist", BacktestHelpTopic.LIVE_HIST, onHelpRequested, Modifier.weight(1f))
-            HelpPill("Colores", BacktestHelpTopic.COLORS, onHelpRequested, Modifier.weight(1f))
         }
     }
 }
@@ -745,20 +772,36 @@ private enum class BacktestHelpTopic(
         message = "Trades es el numero total de operaciones registradas para evaluar la estrategia."
     ),
     SETTLED(
-        title = "Liquidados",
-        message = "Liquidados son trades ya cerrados con resultado real confirmado por temperatura observada."
+        title = "Simulados",
+        message = "Simulados son trades cuyo dia objetivo ya cerró y pasaron por el motor de paper trading."
     ),
-    PENDING(
-        title = "Pendientes",
-        message = "Pendientes son trades que aun no tienen resultado final porque su dia objetivo no ha cerrado o no pudo liquidarse todavia."
+    EXECUTED(
+        title = "Ejecutados",
+        message = "Ejecutados son trades que el simulador consiguió llenar segun reglas de fill, spread y liquidez."
+    ),
+    NO_FILL(
+        title = "NoFill",
+        message = "NoFill indica que la orden no se llenó en la simulacion. Cuenta para control de ejecucion, pero no arriesga stake."
+    ),
+    FILL_RATE(
+        title = "Fill-rate",
+        message = "Fill-rate es el porcentaje de trades simulados que realmente se ejecutan. Si cae, la ventaja teorica es dificil de capturar."
     ),
     LIVE_HIST(
         title = "Live vs Hist",
-        message = "Live son operaciones capturadas en tiempo real desde esta app. Hist son operaciones importadas del historico inicial para arrancar con datos."
+        message = "Live son operaciones capturadas en tiempo real desde esta app. Hist son operaciones importadas del historico inicial para arrancar con datos. Formato: total (simulados/ejecutados)."
     ),
-    PNL(
-        title = "PnL",
-        message = "PnL (profit and loss) es ganancia o perdida total en unidades por trade. Positivo mejor, negativo peor."
+    EXPECTED_PNL(
+        title = "Expected PnL",
+        message = "Expected PnL es la ganancia esperada por el modelo bajo reglas de ejecucion simuladas."
+    ),
+    REALIZED_PNL(
+        title = "Realized PnL",
+        message = "Realized PnL es la ganancia/perdida que realmente obtuvo la simulacion tras fill y liquidacion final."
+    ),
+    EXEC_GAP(
+        title = "Gap de ejecucion",
+        message = "Gap de ejecucion = Realized PnL - Expected PnL. Negativo indica que la ejecucion real rindio peor de lo esperado."
     ),
     STAKE(
         title = "Stake",
@@ -784,13 +827,9 @@ private enum class BacktestHelpTopic(
         title = "Log-loss",
         message = "Log-loss penaliza mucho la confianza excesiva cuando falla. Menor valor significa mejor prediccion probabilistica."
     ),
-    COLORS(
-        title = "Colores",
-        message = "Verde indica resultado favorable (ganancia o acierto). Rojo indica resultado desfavorable (perdida o fallo). Amarillo se usa como advertencia."
-    ),
     DIRECTION_SIGNAL(
         title = "Direction y señal",
-        message = "Direction muestra si la tesis era OVER, UNDER o RANGE. YES/NO indica el lado comprado en el mercado. Junto al color, resume la decision de entrada."
+        message = "Direction muestra si la tesis era OVER, UNDER o RANGE. YES/NO indica el lado comprado. EXEC/NO-FILL indica si pudo ejecutarse."
     ),
     OBSERVED_MAX(
         title = "Obs",
