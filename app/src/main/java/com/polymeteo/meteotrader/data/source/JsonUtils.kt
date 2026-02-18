@@ -3,6 +3,7 @@ package com.polymeteo.meteotrader.data.source
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
@@ -20,6 +21,11 @@ fun JsonObject.doubleOrNull(key: String): Double? {
 fun JsonObject.longOrNull(key: String): Long? {
     val primitive = this[key] as? JsonPrimitive ?: return null
     return primitive.longOrNull ?: primitive.contentOrNull?.toLongOrNull()
+}
+
+fun JsonObject.booleanOrNull(key: String): Boolean? {
+    val primitive = this[key] as? JsonPrimitive ?: return null
+    return primitive.booleanOrNull ?: primitive.contentOrNull?.toBooleanStrictOrNull()
 }
 
 fun JsonObject.objOrNull(key: String): JsonObject? = this[key] as? JsonObject

@@ -12,10 +12,13 @@ App Android (Jetpack Compose) para mercados de temperatura máxima diaria en Pol
   - Delta vs METAR anterior del mismo día
   - Temperatura de estación de control (scraping Wunderground)
   - `PolyTEMP` (media de máximas diarias de las fuentes que sí respondieron)
+  - Señal trader (`OVER` / `UNDER` / `RANGE`) + edge estimado
 - Pantalla detalle por ciudad con:
   - Bloque completo METAR
   - Lista de fuentes de forecast con `Now`, `Max`, estado y error
   - Errores acumulados por proveedor
+  - Trader Mode: mercados Polymarket detectados, edge por mercado, recomendación `YES/NO`, semáforo y top edge de ciudad
+- Banner `Top Edges` en pantalla principal con las mejores oportunidades globales detectadas.
 - Refresco por botón y pull-to-refresh.
 
 ## Fuentes conectadas
@@ -29,6 +32,10 @@ App Android (Jetpack Compose) para mercados de temperatura máxima diaria en Pol
   - Weatherstack
   - NOAA Weather.gov (solo ciudades de EE.UU.)
   - ECMWF Web API marcado como `SKIPPED` (placeholder para integración batch).
+- Trader markets:
+  - Polymarket Gamma API (`/markets`) con filtro dinámico por ciudad de mercados de máxima diaria.
+  - Resolución principal por `slug` de evento (`/events?slug=highest-temperature-in-{city}-on-{month}-{day}-{year}`) para hoy, mañana y pasado mañana.
+  - Parser de preguntas de tipo `or higher`, `or below`, `exact`, `between X-Y`.
 
 ## Configuración
 

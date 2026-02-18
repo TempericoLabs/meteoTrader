@@ -33,6 +33,8 @@ import androidx.compose.ui.unit.dp
 import com.polymeteo.meteotrader.data.model.CityWeatherData
 import com.polymeteo.meteotrader.data.model.ForecastSourceResult
 import com.polymeteo.meteotrader.data.model.SourceStatus
+import com.polymeteo.meteotrader.data.model.TraderOpportunity
+import com.polymeteo.meteotrader.data.model.TraderSignalLevel
 import com.polymeteo.meteotrader.ui.theme.DarkBase
 import com.polymeteo.meteotrader.ui.theme.DarkPanel
 import com.polymeteo.meteotrader.ui.theme.MutedInk
@@ -40,8 +42,10 @@ import com.polymeteo.meteotrader.ui.theme.Negative
 import com.polymeteo.meteotrader.ui.theme.Neutral
 import com.polymeteo.meteotrader.ui.theme.Positive
 import com.polymeteo.meteotrader.util.controlTempInUnit
+import com.polymeteo.meteotrader.util.directionLabel
 import com.polymeteo.meteotrader.util.formatDelta
 import com.polymeteo.meteotrader.util.formatInZone
+import com.polymeteo.meteotrader.util.formatPercent
 import com.polymeteo.meteotrader.util.formatTemperature
 import com.polymeteo.meteotrader.util.metarCurrentInUnit
 import com.polymeteo.meteotrader.util.metarDeltaInUnit
@@ -158,6 +162,36 @@ fun CityDetailScreen(
                     )
                 }
 
+                item {
+                    TraderHeader(cityData = cityData)
+                }
+
+                if (cityData.polymarket.opportunities.isNotEmpty()) {
+                    items(
+                        cityData.polymarket.opportunities.take(12),
+                        key = { it.marketId }
+                    ) { opportunity ->
+                        TraderOpportunityRow(opportunity = opportunity)
+                    }
+                } else {
+                    item {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp)
+                                .background(DarkPanel)
+                                .border(1.dp, Color(0x22FFFFFF))
+                                .padding(12.dp)
+                        ) {
+                            Text(
+                                text = cityData.polymarket.error ?: "Sin mercados detectados",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MutedInk
+                            )
+                        }
+                    }
+                }
+
                 if (cityData.warnings.isNotEmpty() || !globalError.isNullOrBlank()) {
                     item {
                         Column(
@@ -228,6 +262,43 @@ private fun DetailPair(label: String, value: String) {
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f)
         )
+    }
+}
+
+@Composable
+private fun TraderHeader(cityData: CityWeatherData) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .background(Color(0x101C2EFF))
+            .border(1.dp, Color(0x2F77C4FF))
+            .padding(12.dp)
+    ) {
+        Text(
+            text = "Trader Mode",
+            style = MaterialTheme.typography.titleMedium,
+            color = Color(0xFF8FC8FF)
+        )
+        Text(
+            text = "Query: ${cityData.polymarket.query}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MutedInk,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+        Text(
+            text = "Mercados evaluados: ${cityData.polymarket.marketsScanned}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MutedInk
+        )
+        cityData.polymarket.topOpportunity?.let { top ->
+            Text(
+                text = "Top edge: ${directionLabel(top.direction)} • ${top.recommendedBuy} ${formatPercent(top.expectedEdge)}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+        }
     }
 }
 
@@ -323,6 +394,69 @@ private fun ForecastRow(
                 style = MaterialTheme.typography.labelSmall,
                 color = Negative,
                 modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun TraderOpportunityRow(opportunity: TraderOpportunity) {
+    val color = when (opportunity.signal) {
+        TraderSignalLevel.GREEN -> Positive
+        TraderSignalLevel.YELLOW -> Color(0xFFFFC857)
+        TraderSignalLevel.RED -> Neutral
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .background(DarkPanel)
+            .border(1.dp, Color(0x22FFFFFF))
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+    ) {
+        Text(
+            text = opportunity.question,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "${directionLabel(opportunity.direction)} • ${opportunity.recommendedBuy}",
+                style = MaterialTheme.typography.labelSmall,
+                color = color
+            )
+            Text(
+                text = "Edge ${formatPercent(opportunity.expectedEdge)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = color
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "Model YES ${formatPercent(opportunity.modelProbabilityYes)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedInk
+            )
+            Text(
+                text = "Mkt YES ${formatPercent(opportunity.yesPrice)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedInk
+            )
+            Text(
+                text = "Liq ${opportunity.liquidity?.let { String.format(java.util.Locale.US, "%.0f", it) } ?: "--"}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedInk
             )
         }
     }

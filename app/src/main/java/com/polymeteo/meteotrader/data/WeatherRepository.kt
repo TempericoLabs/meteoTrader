@@ -13,6 +13,7 @@ import com.polymeteo.meteotrader.data.model.CityWeatherData
 import com.polymeteo.meteotrader.data.model.SourceStatus
 import com.polymeteo.meteotrader.data.source.HttpClient
 import com.polymeteo.meteotrader.data.source.MetarSource
+import com.polymeteo.meteotrader.data.source.PolymarketSource
 import com.polymeteo.meteotrader.data.source.WundergroundSource
 import com.polymeteo.meteotrader.util.celsiusToFahrenheit
 import kotlinx.coroutines.async
@@ -27,7 +28,8 @@ import java.util.Locale
 class WeatherRepository(
     private val metarSource: MetarSource,
     private val wundergroundSource: WundergroundSource,
-    private val forecastProviders: List<ForecastProvider>
+    private val forecastProviders: List<ForecastProvider>,
+    private val polymarketSource: PolymarketSource
 ) {
 
     suspend fun fetchAllCities(): List<CityWeatherData> = coroutineScope {
@@ -63,10 +65,16 @@ class WeatherRepository(
         } else {
             null
         }
+        val polymarket = polymarketSource.fetch(
+            city = city,
+            polyTempC = polyTempC,
+            forecastDailyMaxC = successfulForecasts
+        )
 
         val warnings = buildList {
             metar.error?.let { add("METAR: $it") }
             control.error?.let { add("Wunderground: $it") }
+            polymarket.error?.let { add("Polymarket: $it") }
             forecasts.filter { it.status == SourceStatus.ERROR }.forEach { result ->
                 result.error?.let { add("${result.sourceName}: $it") }
             }
@@ -80,6 +88,7 @@ class WeatherRepository(
             forecasts = forecasts,
             polyTempC = polyTempC,
             polyTempF = polyTempC?.let(::celsiusToFahrenheit),
+            polymarket = polymarket,
             updatedAt = Instant.now(),
             warnings = warnings
         )
@@ -95,6 +104,7 @@ class WeatherRepository(
             val httpClient = HttpClient()
             val metarSource = MetarSource(httpClient)
             val wundergroundSource = WundergroundSource(httpClient)
+            val polymarketSource = PolymarketSource(httpClient)
 
             val providers: List<ForecastProvider> = listOf(
                 WindyProvider(
@@ -139,7 +149,8 @@ class WeatherRepository(
             return WeatherRepository(
                 metarSource = metarSource,
                 wundergroundSource = wundergroundSource,
-                forecastProviders = providers
+                forecastProviders = providers,
+                polymarketSource = polymarketSource
             )
         }
     }

@@ -29,8 +29,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.polymeteo.meteotrader.data.model.CityWeatherData
+import com.polymeteo.meteotrader.data.model.TraderSignalLevel
 import com.polymeteo.meteotrader.ui.MeteoUiState
 import com.polymeteo.meteotrader.ui.theme.DarkBase
 import com.polymeteo.meteotrader.ui.theme.DarkPanel
@@ -39,8 +41,10 @@ import com.polymeteo.meteotrader.ui.theme.Neutral
 import com.polymeteo.meteotrader.ui.theme.Negative
 import com.polymeteo.meteotrader.ui.theme.Positive
 import com.polymeteo.meteotrader.util.controlTempInUnit
+import com.polymeteo.meteotrader.util.directionLabel
 import com.polymeteo.meteotrader.util.formatDelta
 import com.polymeteo.meteotrader.util.formatInZone
+import com.polymeteo.meteotrader.util.formatPercent
 import com.polymeteo.meteotrader.util.formatTemperature
 import com.polymeteo.meteotrader.util.metarCurrentInUnit
 import com.polymeteo.meteotrader.util.metarDeltaInUnit
@@ -58,6 +62,10 @@ fun CitiesScreen(
             .fillMaxSize()
             .background(DarkBase)
     ) {
+        val topEdges = state.cities
+            .mapNotNull { city -> city.polymarket.topOpportunity?.let { city.city.name to it } }
+            .sortedByDescending { (_, opp) -> opp.expectedEdge }
+
         HeaderBar(
             updatedText = state.lastUpdatedAt?.formatInZone("UTC", "HH:mm:ss 'UTC'") ?: "sin actualización",
             onRefresh = onRefresh
@@ -71,6 +79,12 @@ fun CitiesScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 6.dp)
+            )
+        }
+
+        if (topEdges.isNotEmpty()) {
+            TopEdgesBanner(
+                edges = topEdges.take(3)
             )
         }
 
@@ -178,16 +192,17 @@ private fun CitiesGrid(
 private fun CityCard(
     data: CityWeatherData,
     modifier: Modifier = Modifier
-) {
-    val current = data.metarCurrentInUnit()
-    val delta = data.metarDeltaInUnit()
-    val control = data.controlTempInUnit()
-    val poly = data.polyTempInUnit()
+    ) {
+        val current = data.metarCurrentInUnit()
+        val delta = data.metarDeltaInUnit()
+        val control = data.controlTempInUnit()
+        val poly = data.polyTempInUnit()
+        val topTrader = data.polymarket.topOpportunity
 
-    val deltaColor = when {
-        delta == null -> Neutral
-        delta > 0 -> Positive
-        delta < 0 -> Negative
+        val deltaColor = when {
+            delta == null -> Neutral
+            delta > 0 -> Positive
+            delta < 0 -> Negative
         else -> Neutral
     }
 
@@ -258,6 +273,35 @@ private fun CityCard(
                 modifier = Modifier.weight(1f)
             )
         }
+
+        if (topTrader != null) {
+            val traderColor = when (topTrader.signal) {
+                TraderSignalLevel.GREEN -> Positive
+                TraderSignalLevel.YELLOW -> Color(0xFFFFC857)
+                TraderSignalLevel.RED -> Neutral
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
+                    .background(traderColor.copy(alpha = 0.12f))
+                    .border(1.dp, traderColor)
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = directionLabel(topTrader.direction),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = traderColor
+                )
+                Text(
+                    text = "${topTrader.recommendedBuy} ${formatPercent(topTrader.expectedEdge)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = traderColor
+                )
+            }
+        }
     }
 }
 
@@ -278,5 +322,36 @@ private fun StatValue(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface
         )
+    }
+}
+
+@Composable
+private fun TopEdgesBanner(
+    edges: List<Pair<String, com.polymeteo.meteotrader.data.model.TraderOpportunity>>
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .background(Color(0x101C2EFF))
+            .border(1.dp, Color(0x2F77C4FF))
+            .padding(8.dp)
+    ) {
+        Text(
+            text = "Top Edges",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFF8FC8FF)
+        )
+
+        edges.forEach { (city, opp) ->
+            Text(
+                text = "$city • ${directionLabel(opp.direction)} • ${opp.recommendedBuy} ${formatPercent(opp.expectedEdge)}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
     }
 }
