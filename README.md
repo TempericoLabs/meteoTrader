@@ -20,6 +20,15 @@ App Android (Jetpack Compose) para mercados de temperatura máxima diaria en Pol
   - Trader Mode: mercados Polymarket detectados, edge por mercado, recomendación `YES/NO`, semáforo y top edge de ciudad
 - Banner `Top Edges` en pantalla principal con las mejores oportunidades globales detectadas.
 - Refresco por botón y pull-to-refresh.
+- Pantalla `Backtesting` con:
+  - PnL acumulado, ROI, hit-rate, Brier score y log-loss.
+  - Ranking por ciudad y por estrategia (`direction + signal`).
+  - Historial de liquidaciones recientes.
+  - Persistencia local de snapshots para evaluar edge real en el tiempo.
+  - Importador histórico inicial (últimos 7 días por ciudad) usando:
+    - forecast histórico Open-Meteo `previous-runs` como señal modelo,
+    - precio de entrada histórico vía CLOB `prices-history`,
+    - liquidación contra máxima diaria real de Wunderground.
 
 ## Fuentes conectadas
 
@@ -56,3 +65,5 @@ APK generado en:
 ## Nota técnica
 
 Wunderground y algunos proveedores pueden cambiar HTML/contratos; el app mantiene fallback y deja trazabilidad del error por fuente para que PolyTEMP use solo datos válidos.
+
+El backtesting liquida mercados históricos usando la máxima diaria observada en Wunderground (`/history/daily/.../date/YYYY-MM-DD`), con reintentos y deduplicación por mercado/bucket temporal para no degradar rendimiento.

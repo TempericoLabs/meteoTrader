@@ -9,11 +9,13 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.polymeteo.meteotrader.ui.screens.BacktestScreen
 import com.polymeteo.meteotrader.ui.screens.CitiesScreen
 import com.polymeteo.meteotrader.ui.screens.CityDetailScreen
 
 private object Routes {
     const val Cities = "cities"
+    const val Backtest = "backtest"
     const val Detail = "detail/{cityId}"
     const val DetailBase = "detail"
 }
@@ -34,9 +36,18 @@ fun MeteoTraderApp(
             CitiesScreen(
                 state = uiState,
                 onRefresh = { viewModel.refresh() },
+                onBacktestSelected = { navController.navigate(Routes.Backtest) },
                 onCitySelected = { cityId ->
                     navController.navigate("${Routes.DetailBase}/$cityId")
                 }
+            )
+        }
+
+        composable(Routes.Backtest) {
+            BacktestScreen(
+                state = uiState,
+                onBack = { navController.popBackStack() },
+                onRefresh = { viewModel.refreshBacktest() }
             )
         }
 

@@ -1,6 +1,9 @@
 package com.polymeteo.meteotrader.data
 
+import android.content.Context
 import com.polymeteo.meteotrader.BuildConfig
+import com.polymeteo.meteotrader.data.backtest.BacktestEngine
+import com.polymeteo.meteotrader.data.backtest.BacktestStore
 import com.polymeteo.meteotrader.data.forecast.ForecastProvider
 import com.polymeteo.meteotrader.data.forecast.OpenMeteoProvider
 import com.polymeteo.meteotrader.data.forecast.OpenWeatherProvider
@@ -8,6 +11,7 @@ import com.polymeteo.meteotrader.data.forecast.PlaceholderEcmwfProvider
 import com.polymeteo.meteotrader.data.forecast.WeatherGovProvider
 import com.polymeteo.meteotrader.data.forecast.WeatherStackProvider
 import com.polymeteo.meteotrader.data.forecast.WindyProvider
+import com.polymeteo.meteotrader.data.model.BacktestReport
 import com.polymeteo.meteotrader.data.model.CityConfig
 import com.polymeteo.meteotrader.data.model.CityWeatherData
 import com.polymeteo.meteotrader.data.model.ControlStationSnapshot
@@ -38,7 +42,8 @@ class WeatherRepository(
     private val metarSource: MetarSource,
     private val wundergroundSource: WundergroundSource,
     private val forecastProviders: List<ForecastProvider>,
-    private val polymarketSource: PolymarketSource
+    private val polymarketSource: PolymarketSource,
+    private val backtestEngine: BacktestEngine? = null
 ) {
 
     suspend fun fetchAllCities(): List<CityWeatherData> = coroutineScope {
@@ -55,6 +60,16 @@ class WeatherRepository(
     suspend fun fetchCityById(cityId: String): CityWeatherData? {
         val city = CityCatalog.findById(cityId) ?: return null
         return fetchCity(city)
+    }
+
+    suspend fun refreshBacktest(cities: List<CityWeatherData>): BacktestReport {
+        val engine = backtestEngine ?: return BacktestReport.empty()
+        return engine.ingestAndSettle(cities)
+    }
+
+    suspend fun loadBacktestReport(): BacktestReport {
+        val engine = backtestEngine ?: return BacktestReport.empty()
+        return engine.computeReport()
     }
 
     suspend fun fetchCity(city: CityConfig): CityWeatherData = coroutineScope {
@@ -282,11 +297,19 @@ class WeatherRepository(
             "ecmwf-webapi" to 1.20
         )
 
-        fun createDefault(): WeatherRepository {
+        fun createDefault(context: Context? = null): WeatherRepository {
             val httpClient = HttpClient()
             val metarSource = MetarSource(httpClient)
             val wundergroundSource = WundergroundSource(httpClient)
             val polymarketSource = PolymarketSource(httpClient)
+            val backtestEngine = context?.let {
+                BacktestEngine(
+                    store = BacktestStore(it),
+                    wundergroundSource = wundergroundSource,
+                    polymarketSource = polymarketSource,
+                    httpClient = httpClient
+                )
+            }
 
             val providers: List<ForecastProvider> = listOf(
                 WindyProvider(
@@ -332,7 +355,8 @@ class WeatherRepository(
                 metarSource = metarSource,
                 wundergroundSource = wundergroundSource,
                 forecastProviders = providers,
-                polymarketSource = polymarketSource
+                polymarketSource = polymarketSource,
+                backtestEngine = backtestEngine
             )
         }
     }

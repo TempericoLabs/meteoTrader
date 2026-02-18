@@ -4,7 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.polymeteo.meteotrader.data.WeatherRepository
+import com.polymeteo.meteotrader.data.model.BacktestReport
 import com.polymeteo.meteotrader.data.model.CityWeatherData
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,9 +17,12 @@ import java.time.Instant
 data class MeteoUiState(
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
+    val isBacktestRefreshing: Boolean = false,
     val cities: List<CityWeatherData> = emptyList(),
     val lastUpdatedAt: Instant? = null,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val backtestErrorMessage: String? = null,
+    val backtestReport: BacktestReport = BacktestReport.empty()
 )
 
 class MeteoViewModel(
@@ -27,9 +32,11 @@ class MeteoViewModel(
     private val _uiState = MutableStateFlow(MeteoUiState())
     val uiState: StateFlow<MeteoUiState> = _uiState.asStateFlow()
     private var refreshJob: Job? = null
+    private var backtestJob: Job? = null
     private val cityRefreshJobs = mutableMapOf<String, Job>()
 
     init {
+        loadBacktestReport()
         refresh(initialLoad = true)
     }
 
@@ -52,6 +59,7 @@ class MeteoViewModel(
                     lastUpdatedAt = Instant.now(),
                     errorMessage = null
                 )
+                launchBacktestRefresh(cities)
             }.onFailure { throwable ->
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
@@ -82,6 +90,7 @@ class MeteoViewModel(
                         lastUpdatedAt = Instant.now(),
                         errorMessage = null
                     )
+                    launchBacktestRefresh(updated)
                 }.onFailure { throwable ->
                     _uiState.value = _uiState.value.copy(
                         errorMessage = throwable.message ?: "No se pudo actualizar la ciudad"
@@ -89,6 +98,65 @@ class MeteoViewModel(
                 }
             } finally {
                 cityRefreshJobs.remove(cityId)
+            }
+        }
+    }
+
+    fun refreshBacktest() {
+        val cities = _uiState.value.cities
+        if (cities.isEmpty()) {
+            loadBacktestReport()
+            return
+        }
+        launchBacktestRefresh(cities)
+    }
+
+    private fun loadBacktestReport() {
+        if (backtestJob?.isActive == true) return
+        backtestJob = viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                isBacktestRefreshing = true,
+                backtestErrorMessage = null
+            )
+            runCatching {
+                repository.loadBacktestReport()
+            }.onSuccess { report ->
+                _uiState.value = _uiState.value.copy(
+                    isBacktestRefreshing = false,
+                    backtestReport = report,
+                    backtestErrorMessage = null
+                )
+            }.onFailure { throwable ->
+                if (throwable is CancellationException) return@onFailure
+                _uiState.value = _uiState.value.copy(
+                    isBacktestRefreshing = false,
+                    backtestErrorMessage = throwable.message ?: "No se pudo cargar backtesting"
+                )
+            }
+        }
+    }
+
+    private fun launchBacktestRefresh(cities: List<CityWeatherData>) {
+        backtestJob?.cancel()
+        backtestJob = viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                isBacktestRefreshing = true,
+                backtestErrorMessage = null
+            )
+            runCatching {
+                repository.refreshBacktest(cities)
+            }.onSuccess { report ->
+                _uiState.value = _uiState.value.copy(
+                    isBacktestRefreshing = false,
+                    backtestReport = report,
+                    backtestErrorMessage = null
+                )
+            }.onFailure { throwable ->
+                if (throwable is CancellationException) return@onFailure
+                _uiState.value = _uiState.value.copy(
+                    isBacktestRefreshing = false,
+                    backtestErrorMessage = throwable.message ?: "No se pudo actualizar backtesting"
+                )
             }
         }
     }

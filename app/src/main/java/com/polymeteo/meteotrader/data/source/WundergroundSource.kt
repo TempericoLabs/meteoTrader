@@ -9,6 +9,7 @@ import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import org.jsoup.Jsoup
+import java.time.LocalDate
 
 class WundergroundSource(
     private val httpClient: HttpClient,
@@ -17,6 +18,22 @@ class WundergroundSource(
 
     suspend fun fetch(city: CityConfig): ControlStationSnapshot {
         val attempts = listOf(city.wundergroundControlUrl, city.wundergroundPwsUrl)
+        return fetchFromUrls(city = city, attempts = attempts)
+    }
+
+    suspend fun fetchDailyMaxForDate(city: CityConfig, date: LocalDate): ControlStationSnapshot {
+        val attempts = buildList {
+            add(buildHistoryDateUrl(city.wundergroundControlUrl, date))
+            add(city.wundergroundControlUrl)
+            add(city.wundergroundPwsUrl)
+        }.distinct()
+        return fetchFromUrls(city = city, attempts = attempts)
+    }
+
+    private suspend fun fetchFromUrls(
+        city: CityConfig,
+        attempts: List<String>
+    ): ControlStationSnapshot {
         val errors = mutableListOf<String>()
 
         for (url in attempts) {
@@ -76,6 +93,13 @@ class WundergroundSource(
             tempF = null,
             error = if (errors.isEmpty()) "Wunderground sin respuesta" else errors.joinToString(" | ")
         )
+    }
+
+    private fun buildHistoryDateUrl(baseUrl: String, date: LocalDate): String {
+        val noQuery = baseUrl.substringBefore("?")
+        val trimmed = noQuery.trimEnd('/')
+        val root = trimmed.substringBefore("/date/")
+        return "$root/date/$date"
     }
 
     private suspend fun extractHighTempActual(

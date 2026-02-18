@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -56,6 +57,7 @@ import com.polymeteo.meteotrader.util.polyTempInUnit
 fun CitiesScreen(
     state: MeteoUiState,
     onRefresh: () -> Unit,
+    onBacktestSelected: () -> Unit,
     onCitySelected: (String) -> Unit
 ) {
     Column(
@@ -69,7 +71,9 @@ fun CitiesScreen(
 
         HeaderBar(
             updatedText = state.lastUpdatedAt?.formatInZone("UTC", "HH:mm:ss 'UTC'") ?: "sin actualización",
-            onRefresh = onRefresh
+            onRefresh = onRefresh,
+            onBacktestSelected = onBacktestSelected,
+            isBacktestRefreshing = state.isBacktestRefreshing
         )
 
         if (!state.errorMessage.isNullOrBlank()) {
@@ -125,7 +129,9 @@ fun CitiesScreen(
 @Composable
 private fun HeaderBar(
     updatedText: String,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    onBacktestSelected: () -> Unit,
+    isBacktestRefreshing: Boolean
 ) {
     Row(
         modifier = Modifier
@@ -149,12 +155,34 @@ private fun HeaderBar(
             )
         }
 
-        FilledIconButton(onClick = onRefresh) {
-            androidx.compose.material3.Icon(
-                imageVector = Icons.Default.Refresh,
-                contentDescription = "Refrescar"
-            )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            FilledIconButton(onClick = onBacktestSelected) {
+                androidx.compose.material3.Icon(
+                    imageVector = Icons.Default.QueryStats,
+                    contentDescription = "Backtesting"
+                )
+            }
+            FilledIconButton(onClick = onRefresh) {
+                androidx.compose.material3.Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Refrescar"
+                )
+            }
         }
+    }
+
+    if (isBacktestRefreshing) {
+        Text(
+            text = "Backtesting actualizando...",
+            style = MaterialTheme.typography.labelSmall,
+            color = MutedInk,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp)
+        )
     }
 }
 

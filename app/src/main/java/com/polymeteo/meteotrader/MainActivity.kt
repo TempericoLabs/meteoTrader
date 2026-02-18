@@ -10,7 +10,7 @@ import com.polymeteo.meteotrader.ui.theme.MeteoTraderTheme
 
 class MainActivity : ComponentActivity() {
 
-    private val repository: WeatherRepository by lazy { WeatherRepository.createDefault() }
+    private val repository: WeatherRepository by lazy { WeatherRepository.createDefault(applicationContext) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

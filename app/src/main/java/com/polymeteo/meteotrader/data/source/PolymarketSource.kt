@@ -35,6 +35,15 @@ class PolymarketSource(
     private val json: Json = Json { ignoreUnknownKeys = true }
 ) {
 
+    data class HistoricalMarketCandidate(
+        val marketId: String,
+        val question: String,
+        val condition: MarketRangeCondition,
+        val yesTokenId: String,
+        val liquidity: Double?,
+        val spread: Double?
+    )
+
     suspend fun fetch(
         city: CityConfig,
         polyTempC: Double?,
@@ -105,6 +114,47 @@ class PolymarketSource(
             topOpportunity = topToday ?: opportunities.firstOrNull(),
             error = null
         )
+    }
+
+    suspend fun fetchHistoricalMarkets(
+        city: CityConfig,
+        targetDate: LocalDate
+    ): List<HistoricalMarketCandidate> {
+        val slug = buildEventSlug(city.name, targetDate)
+        val url = "https://gamma-api.polymarket.com/events?slug=$slug"
+
+        return runCatching {
+            val response = httpClient.get(
+                url,
+                headers = mapOf(
+                    "User-Agent" to "PolyMeteo/0.1",
+                    "Accept" to "application/json"
+                ),
+                retries = 2
+            )
+            if (response.code !in 200..299) return emptyList()
+            val root = json.parseToJsonElement(response.body) as? JsonArray ?: return emptyList()
+            val event = root.firstOrNull() as? JsonObject ?: return emptyList()
+            val eventMarkets = event["markets"] as? JsonArray ?: return emptyList()
+
+            eventMarkets
+                .mapNotNull { it as? JsonObject }
+                .mapNotNull { parseMarket(it, city, allowClosed = true) }
+                .filter { market ->
+                    market.condition.targetDate == null || market.condition.targetDate == targetDate
+                }
+                .mapNotNull { market ->
+                    val yesTokenId = market.yesTokenId ?: return@mapNotNull null
+                    HistoricalMarketCandidate(
+                        marketId = market.id,
+                        question = market.question,
+                        condition = market.condition,
+                        yesTokenId = yesTokenId,
+                        liquidity = market.liquidity,
+                        spread = market.spread
+                    )
+                }
+        }.getOrDefault(emptyList())
     }
 
     private suspend fun fetchDirectEventMarkets(
@@ -203,21 +253,31 @@ class PolymarketSource(
         }.getOrDefault(emptyList())
     }
 
-    private fun parseMarket(obj: JsonObject, city: CityConfig): ParsedMarket? {
+    private fun parseMarket(
+        obj: JsonObject,
+        city: CityConfig,
+        allowClosed: Boolean = false
+    ): ParsedMarket? {
         val question = obj.stringOrNull("question") ?: return null
         if (!question.contains("highest temperature", ignoreCase = true)) return null
         if (!containsCityName(question, city.name)) return null
 
         val isActive = obj.booleanOrNull("active") ?: true
         val isClosed = obj.booleanOrNull("closed") ?: false
-        if (!isActive || isClosed) return null
+        if (!allowClosed && (!isActive || isClosed)) return null
 
         val condition = parseConditionFromQuestion(question, city.zoneId) ?: return null
         val outcomes = parseStringArray(obj.stringOrNull("outcomes"))
         val prices = parseDoubleArray(obj.stringOrNull("outcomePrices"))
+        val tokenIds = parseStringArray(obj.stringOrNull("clobTokenIds"))
 
         val yesIndex = outcomes.indexOfFirst { it.equals("Yes", ignoreCase = true) }
         val noIndex = outcomes.indexOfFirst { it.equals("No", ignoreCase = true) }
+        val yesTokenId = when {
+            yesIndex >= 0 && yesIndex < tokenIds.size -> tokenIds[yesIndex]
+            tokenIds.isNotEmpty() -> tokenIds.first()
+            else -> null
+        }
 
         val yesPrice = when {
             yesIndex >= 0 && yesIndex < prices.size -> prices[yesIndex]
@@ -241,6 +301,7 @@ class PolymarketSource(
             condition = condition,
             yesPrice = yesPrice,
             noPrice = noPrice,
+            yesTokenId = yesTokenId,
             liquidity = obj.doubleOrNull("liquidityNum") ?: obj.doubleOrNull("liquidity"),
             volume24h = obj.doubleOrNull("volume24hr") ?: obj.doubleOrNull("volume24hrClob"),
             spread = obj.doubleOrNull("spread")
@@ -493,6 +554,7 @@ class PolymarketSource(
         val condition: MarketRangeCondition,
         val yesPrice: Double,
         val noPrice: Double,
+        val yesTokenId: String?,
         val liquidity: Double?,
         val volume24h: Double?,
         val spread: Double?
