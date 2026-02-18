@@ -165,7 +165,7 @@ fun CityDetailScreen(
                     val targetDate = opportunity.condition.targetDate
                     (targetDate == null && selectedTab.date == cityToday) || targetDate == selectedTab.date
                 }
-                .sortedByDescending { it.expectedEdge }
+                .sortedByDescending { it.executableEdge }
             val selectedTopOpportunity = selectedOpportunities.firstOrNull()
             val opportunitiesByDate = cityData.polymarket.opportunities.groupBy { it.condition.targetDate }
 
@@ -482,10 +482,16 @@ private fun TraderHeader(
         )
         selectedTopOpportunity?.let { top ->
             Text(
-                text = "Top edge ($selectedDayTitle): ${directionLabel(top.direction)} • ${top.recommendedBuy} ${formatPercent(top.expectedEdge)}",
+                text = "Top ejecutable ($selectedDayTitle): ${directionLabel(top.direction)} • ${top.recommendedBuy} ${formatPercent(top.executableEdge)} • ${if (top.shouldTrade) "BET" else "PASS"}",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(top = 6.dp)
+            )
+            Text(
+                text = "Bruto ${formatPercent(top.rawEdge)} • Costes ${formatPercent(top.totalCost)} • Fill ${formatPercent(top.fillProbability)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedInk,
+                modifier = Modifier.padding(top = 4.dp)
             )
         } ?: Text(
             text = "Sin oportunidades en $selectedDayTitle",
@@ -497,7 +503,7 @@ private fun TraderHeader(
         cityData.polymarket.topOpportunity?.let { topToday ->
             if (selectedTopOpportunity?.marketId != topToday.marketId) {
                 Text(
-                    text = "Referencia hoy: ${directionLabel(topToday.direction)} • ${topToday.recommendedBuy} ${formatPercent(topToday.expectedEdge)}",
+                    text = "Referencia hoy: ${directionLabel(topToday.direction)} • ${topToday.recommendedBuy} ${formatPercent(topToday.executableEdge)} • ${if (topToday.shouldTrade) "BET" else "PASS"}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MutedInk,
                     modifier = Modifier.padding(top = 4.dp)
@@ -655,11 +661,12 @@ private fun TraderOpportunityRow(
     opportunity: TraderOpportunity,
     onHelpRequested: (TraderHelpTopic) -> Unit
 ) {
-    val color = when (opportunity.signal) {
+    val signalColor = when (opportunity.signal) {
         TraderSignalLevel.GREEN -> Positive
         TraderSignalLevel.YELLOW -> Color(0xFFFFC857)
         TraderSignalLevel.RED -> Neutral
     }
+    val actionColor = if (opportunity.shouldTrade) Positive else Neutral
 
     Column(
         modifier = Modifier
@@ -689,7 +696,7 @@ private fun TraderOpportunityRow(
                 ClickableHelpText(
                     text = directionLabel(opportunity.direction),
                     topic = helpTopicForDirection(opportunity.direction),
-                    color = color,
+                    color = signalColor,
                     onHelpRequested = onHelpRequested
                 )
                 Text(
@@ -700,7 +707,7 @@ private fun TraderOpportunityRow(
                 ClickableHelpText(
                     text = opportunity.recommendedBuy,
                     topic = TraderHelpTopic.YES_NO,
-                    color = color,
+                    color = signalColor,
                     onHelpRequested = onHelpRequested
                 )
                 Text(
@@ -711,18 +718,81 @@ private fun TraderOpportunityRow(
                 ClickableHelpText(
                     text = signalLabel(opportunity.signal),
                     topic = helpTopicForSignal(opportunity.signal),
-                    color = color,
+                    color = signalColor,
                     onHelpRequested = onHelpRequested
                 )
             }
             ClickableHelpText(
-                text = "Edge ${formatPercent(opportunity.expectedEdge)}",
-                topic = TraderHelpTopic.EDGE,
+                text = if (opportunity.shouldTrade) "BET" else "PASS",
+                topic = TraderHelpTopic.ACTION,
                 style = MaterialTheme.typography.labelSmall,
-                color = color,
+                color = actionColor,
                 onHelpRequested = onHelpRequested
             )
         }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            ClickableHelpText(
+                text = "Exec ${formatPercent(opportunity.executableEdge)}",
+                topic = TraderHelpTopic.EXECUTABLE_EDGE,
+                color = signalColor,
+                modifier = Modifier.weight(1f),
+                onHelpRequested = onHelpRequested
+            )
+            ClickableHelpText(
+                text = "Bruto ${formatPercent(opportunity.rawEdge)}",
+                topic = TraderHelpTopic.RAW_EDGE,
+                color = MutedInk,
+                modifier = Modifier.weight(1f),
+                onHelpRequested = onHelpRequested,
+                textAlign = TextAlign.Center
+            )
+            ClickableHelpText(
+                text = "Costes ${formatPercent(opportunity.totalCost)}",
+                topic = TraderHelpTopic.COSTS,
+                color = MutedInk,
+                modifier = Modifier.weight(1f),
+                onHelpRequested = onHelpRequested,
+                textAlign = TextAlign.End
+            )
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            ClickableHelpText(
+                text = "Fill ${formatPercent(opportunity.fillProbability)}",
+                topic = TraderHelpTopic.FILL,
+                color = MutedInk,
+                modifier = Modifier.weight(1f),
+                onHelpRequested = onHelpRequested
+            )
+            ClickableHelpText(
+                text = "Post-coste ${formatPercent(opportunity.edgeAfterCosts)}",
+                topic = TraderHelpTopic.EDGE,
+                color = MutedInk,
+                modifier = Modifier.weight(1f),
+                onHelpRequested = onHelpRequested,
+                textAlign = TextAlign.Center
+            )
+            ClickableHelpText(
+                text = "Fee ${formatPercent(opportunity.feeCost)}",
+                topic = TraderHelpTopic.COSTS,
+                color = MutedInk,
+                modifier = Modifier.weight(1f),
+                onHelpRequested = onHelpRequested,
+                textAlign = TextAlign.End
+            )
+        }
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -753,6 +823,37 @@ private fun TraderOpportunityRow(
                 textAlign = TextAlign.End
             )
         }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            ClickableHelpText(
+                text = "Mkt NO ${formatPercent(opportunity.noPrice)}",
+                topic = TraderHelpTopic.YES_NO,
+                color = MutedInk,
+                modifier = Modifier.weight(1f),
+                onHelpRequested = onHelpRequested
+            )
+            ClickableHelpText(
+                text = "Spread ${opportunity.spread?.let { String.format(java.util.Locale.US, "%.2f", it) } ?: "--"}",
+                topic = TraderHelpTopic.SPREAD,
+                color = MutedInk,
+                modifier = Modifier.weight(1f),
+                onHelpRequested = onHelpRequested,
+                textAlign = TextAlign.Center
+            )
+            ClickableHelpText(
+                text = "LiqCost ${formatPercent(opportunity.liquidityCost)}",
+                topic = TraderHelpTopic.COSTS,
+                color = MutedInk,
+                modifier = Modifier.weight(1f),
+                onHelpRequested = onHelpRequested,
+                textAlign = TextAlign.End
+            )
+        }
     }
 }
 
@@ -775,10 +876,27 @@ private fun TraderHelpTerms(onHelpRequested: (TraderHelpTopic) -> Unit) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            HelpPill("EDGE", TraderHelpTopic.EDGE, onHelpRequested, Modifier.weight(1f))
+            HelpPill("EJEC", TraderHelpTopic.EXECUTABLE_EDGE, onHelpRequested, Modifier.weight(1f))
+            HelpPill("BRUTO", TraderHelpTopic.RAW_EDGE, onHelpRequested, Modifier.weight(1f))
+            HelpPill("COSTE", TraderHelpTopic.COSTS, onHelpRequested, Modifier.weight(1f))
+            HelpPill("FILL", TraderHelpTopic.FILL, onHelpRequested, Modifier.weight(1f))
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            HelpPill("BET/PASS", TraderHelpTopic.ACTION, onHelpRequested, Modifier.weight(1f))
+            HelpPill("LIQ", TraderHelpTopic.LIQUIDITY, onHelpRequested, Modifier.weight(1f))
+            HelpPill("SPREAD", TraderHelpTopic.SPREAD, onHelpRequested, Modifier.weight(1f))
             HelpPill("VERDE", TraderHelpTopic.GREEN, onHelpRequested, Modifier.weight(1f))
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
             HelpPill("AMARILLO", TraderHelpTopic.YELLOW, onHelpRequested, Modifier.weight(1f))
             HelpPill("BAJO", TraderHelpTopic.RED, onHelpRequested, Modifier.weight(1f))
+            HelpPill("EDGE", TraderHelpTopic.EDGE, onHelpRequested, Modifier.weight(1f))
         }
     }
 }
@@ -898,21 +1016,45 @@ private enum class TraderHelpTopic(
         title = "YES y NO",
         message = "Comprar YES apuesta a que la condicion se cumple. Comprar NO apuesta a que no se cumple. Elige el lado donde tu estimacion supere claramente al precio del mercado."
     ),
+    EXECUTABLE_EDGE(
+        title = "Edge ejecutable",
+        message = "Edge ejecutable es la ventaja final que queda despues de descontar costes y multiplicar por la probabilidad de ejecucion. Es el edge que realmente se puede intentar capturar."
+    ),
+    RAW_EDGE(
+        title = "Edge bruto",
+        message = "Edge bruto compara solo modelo vs precio, sin costes. Sirve para ver si hay idea base, pero no basta para decidir entrada real."
+    ),
     EDGE(
         title = "EDGE",
-        message = "Edge es la diferencia entre lo que estima el modelo y lo que descuenta el mercado. Cuanto mayor sea el edge positivo, mayor ventaja teorica; edge bajo implica poca ventaja."
+        message = "Post-coste es el edge que queda tras restar comision, spread e impacto de liquidez, antes de aplicar fill probability. Si ya es bajo aqui, suele ser mejor no entrar."
+    ),
+    COSTS(
+        title = "Costes",
+        message = "Costes agrupa fee estimada, spread y penalizacion por liquidez. Si los costes comen el edge bruto, la operacion deja de ser atractiva."
+    ),
+    FILL(
+        title = "Fill probability",
+        message = "Fill es la probabilidad de poder ejecutar la orden cerca del precio esperado. Baja liquidez o spread alto bajan este valor y reducen edge ejecutable."
+    ),
+    ACTION(
+        title = "BET o PASS",
+        message = "BET significa que la oportunidad supera umbrales minimos de edge ejecutable y fill. PASS significa que hay ventaja teorica insuficiente o dificil de ejecutar."
+    ),
+    SPREAD(
+        title = "Spread",
+        message = "Spread es la distancia entre mejor compra y mejor venta. Cuanto mas alto, peor precio de entrada/salida y mayor coste real de la operacion."
     ),
     GREEN(
         title = "Senal VERDE",
-        message = "Verde indica oportunidad fuerte: edge alto y mejor alineacion entre modelo y mercado. Aun asi, revisa liquidez y cambios recientes antes de entrar."
+        message = "Verde indica ventaja ejecutable alta y fill suficiente. Suele ser la zona prioritaria para evaluar entrada, siempre con control de riesgo."
     ),
     YELLOW(
         title = "Senal AMARILLA",
-        message = "Amarillo indica oportunidad moderada. Puede valer, pero con menos margen; suele ser mejor tamano de posicion pequeno o esperar confirmacion."
+        message = "Amarillo indica ventaja ejecutable moderada. Puede interesar en posicion mas pequena o esperando mejor precio."
     ),
     RED(
         title = "Senal BAJA",
-        message = "Bajo (antes rojo/gris) indica ventaja debil o incierta. Normalmente es zona de no apostar salvo informacion externa muy clara."
+        message = "Bajo indica ventaja ejecutable debil o mala ejecucion probable. Normalmente es zona de no entrar."
     ),
     LIQUIDITY(
         title = "Liquidez",

@@ -27,6 +27,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.exp
+import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.sqrt
 
@@ -100,11 +101,11 @@ class PolymarketSource(
                     sigmaC = sigmaC
                 )
             }
-            .sortedByDescending { it.expectedEdge }
+            .sortedByDescending { it.executableEdge }
 
         val topToday = opportunities
             .filter { it.condition.targetDate == null || it.condition.targetDate == today }
-            .maxByOrNull { it.expectedEdge }
+            .maxByOrNull { it.executableEdge }
 
         return PolymarketSnapshot(
             query = buildQuery(city),
@@ -338,7 +339,8 @@ class PolymarketSource(
         val evNo = (1.0 - probabilityYes) - market.noPrice
 
         val recommendedBuy = if (evYes >= evNo) "YES" else "NO"
-        val edge = max(evYes, evNo)
+        val rawEdge = max(evYes, evNo)
+        val selectedPrice = if (recommendedBuy == "YES") market.yesPrice else market.noPrice
 
         val direction = when (market.condition.type) {
             MarketConditionType.GREATER_OR_EQUAL -> if (recommendedBuy == "YES") TraderDirection.OVER else TraderDirection.UNDER
@@ -362,16 +364,31 @@ class PolymarketSource(
             }
         }
 
-        val liquidityPenalty = if ((market.liquidity ?: 0.0) < 900.0) 0.020 else 0.0
-        val spreadPenalty = ((market.spread ?: 0.0).coerceAtLeast(0.0) * 0.45).coerceAtMost(0.03)
-        val volumePenalty = if ((market.volume24h ?: 0.0) < 700.0) 0.012 else 0.0
-        val adjustedEdge = edge - liquidityPenalty - spreadPenalty - volumePenalty
+        val fillProbability = estimateFillProbability(
+            liquidity = market.liquidity,
+            volume24h = market.volume24h,
+            spread = market.spread
+        )
+        val feeCost = (selectedPrice * ASSUMED_ROUNDTRIP_FEE_RATE).coerceAtLeast(0.0)
+        val spreadCost = estimateSpreadCost(
+            spread = market.spread,
+            fillProbability = fillProbability
+        )
+        val liquidityCost = estimateLiquidityCost(
+            liquidity = market.liquidity,
+            volume24h = market.volume24h,
+            fillProbability = fillProbability
+        )
+        val totalCost = (feeCost + spreadCost + liquidityCost).coerceAtMost(MAX_TOTAL_EXECUTION_COST)
+        val edgeAfterCosts = rawEdge - totalCost
+        val executableEdge = edgeAfterCosts * fillProbability
 
         val signal = when {
-            adjustedEdge >= 0.12 -> TraderSignalLevel.GREEN
-            adjustedEdge >= 0.06 -> TraderSignalLevel.YELLOW
+            executableEdge >= GREEN_EXECUTABLE_EDGE && fillProbability >= GREEN_MIN_FILL_PROBABILITY -> TraderSignalLevel.GREEN
+            executableEdge >= YELLOW_EXECUTABLE_EDGE && fillProbability >= YELLOW_MIN_FILL_PROBABILITY -> TraderSignalLevel.YELLOW
             else -> TraderSignalLevel.RED
         }
+        val shouldTrade = executableEdge >= MIN_EXECUTABLE_EDGE_TO_TRADE && fillProbability >= MIN_FILL_PROBABILITY_TO_TRADE
 
         return TraderOpportunity(
             marketId = market.id,
@@ -380,7 +397,16 @@ class PolymarketSource(
             yesPrice = market.yesPrice,
             noPrice = market.noPrice,
             modelProbabilityYes = probabilityYes,
-            expectedEdge = adjustedEdge,
+            expectedEdge = executableEdge,
+            rawEdge = rawEdge,
+            edgeAfterCosts = edgeAfterCosts,
+            executableEdge = executableEdge,
+            fillProbability = fillProbability,
+            feeCost = feeCost,
+            spreadCost = spreadCost,
+            liquidityCost = liquidityCost,
+            totalCost = totalCost,
+            shouldTrade = shouldTrade,
             recommendedBuy = recommendedBuy,
             direction = direction,
             signal = signal,
@@ -389,6 +415,54 @@ class PolymarketSource(
             spread = market.spread
         )
     }
+
+    private fun estimateFillProbability(
+        liquidity: Double?,
+        volume24h: Double?,
+        spread: Double?
+    ): Double {
+        val liq = (liquidity ?: 0.0).coerceAtLeast(0.0)
+        val vol = (volume24h ?: 0.0).coerceAtLeast(0.0)
+        val spr = (spread ?: DEFAULT_SPREAD_ASSUMPTION).coerceAtLeast(0.0)
+
+        val liquidityScore = logistic((ln(1.0 + liq) - ln(1.0 + 1800.0)) / 0.9)
+        val volumeScore = logistic((ln(1.0 + vol) - ln(1.0 + 1200.0)) / 0.95)
+        val spreadScore = (1.0 - (spr / 0.08)).coerceIn(0.0, 1.0)
+        val blended = (0.50 * liquidityScore) + (0.30 * volumeScore) + (0.20 * spreadScore)
+
+        return (0.15 + (0.80 * blended)).coerceIn(0.15, 0.98)
+    }
+
+    private fun estimateSpreadCost(
+        spread: Double?,
+        fillProbability: Double
+    ): Double {
+        val effectiveSpread = (spread ?: DEFAULT_SPREAD_ASSUMPTION).coerceIn(0.0, 0.12)
+        return (effectiveSpread * (0.50 + ((1.0 - fillProbability) * 0.35))).coerceAtMost(0.07)
+    }
+
+    private fun estimateLiquidityCost(
+        liquidity: Double?,
+        volume24h: Double?,
+        fillProbability: Double
+    ): Double {
+        val liq = (liquidity ?: 0.0).coerceAtLeast(0.0)
+        val vol = (volume24h ?: 0.0).coerceAtLeast(0.0)
+        val thinBookPenalty = when {
+            liq < 600.0 -> 0.020
+            liq < 1500.0 -> 0.010
+            else -> 0.0
+        }
+        val weakFlowPenalty = when {
+            vol < 500.0 -> 0.015
+            vol < 1200.0 -> 0.008
+            else -> 0.0
+        }
+        val lowFillPenalty = (1.0 - fillProbability).coerceIn(0.0, 1.0) * 0.06
+        return (thinBookPenalty + weakFlowPenalty + lowFillPenalty).coerceAtMost(0.09)
+    }
+
+    private fun logistic(x: Double): Double = 1.0 / (1.0 + exp(-x))
 
     private fun parseConditionFromQuestion(question: String, cityZoneId: String): MarketRangeCondition? {
         val geRegex = Regex(
@@ -564,4 +638,19 @@ class PolymarketSource(
         val markets: List<ParsedMarket>,
         val errors: List<String>
     )
+
+    private companion object {
+        const val ASSUMED_ROUNDTRIP_FEE_RATE = 0.018
+        const val DEFAULT_SPREAD_ASSUMPTION = 0.020
+        const val MAX_TOTAL_EXECUTION_COST = 0.30
+
+        const val MIN_FILL_PROBABILITY_TO_TRADE = 0.45
+        const val MIN_EXECUTABLE_EDGE_TO_TRADE = 0.015
+
+        const val GREEN_MIN_FILL_PROBABILITY = 0.65
+        const val GREEN_EXECUTABLE_EDGE = 0.06
+
+        const val YELLOW_MIN_FILL_PROBABILITY = 0.45
+        const val YELLOW_EXECUTABLE_EDGE = 0.025
+    }
 }

@@ -67,7 +67,7 @@ fun CitiesScreen(
     ) {
         val topEdges = state.cities
             .mapNotNull { city -> city.polymarket.topOpportunity?.let { city.city.name to it } }
-            .sortedByDescending { (_, opp) -> opp.expectedEdge }
+            .sortedByDescending { (_, opp) -> opp.executableEdge }
 
         HeaderBar(
             updatedText = state.lastUpdatedAt?.formatInZone("UTC", "HH:mm:ss 'UTC'") ?: "sin actualización",
@@ -313,7 +313,7 @@ private fun CityCard(
                     maxLines = 1
                 )
                 Text(
-                    text = "${topTrader.recommendedBuy} ${formatPercent(topTrader.expectedEdge)}",
+                    text = "${if (topTrader.shouldTrade) "BET" else "PASS"} ${topTrader.recommendedBuy} ${formatPercent(topTrader.executableEdge)}",
                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                     color = traderColor,
                     maxLines = 1,
@@ -367,14 +367,14 @@ private fun TopEdgesBanner(
             .padding(8.dp)
     ) {
         Text(
-            text = "Top Edges",
+            text = "Top Ejecutables",
             style = MaterialTheme.typography.labelSmall,
             color = Color(0xFF8FC8FF)
         )
 
         edges.forEach { (city, opp) ->
             Text(
-                text = "$city • ${directionLabel(opp.direction)} • ${opp.recommendedBuy} ${formatPercent(opp.expectedEdge)}",
+                text = "$city • ${if (opp.shouldTrade) "BET" else "PASS"} • ${directionLabel(opp.direction)} • ${opp.recommendedBuy} ${formatPercent(opp.executableEdge)}",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
