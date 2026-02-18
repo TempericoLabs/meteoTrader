@@ -24,6 +24,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.exp
@@ -51,7 +52,9 @@ class PolymarketSource(
         forecastDailyMaxC: List<Double>
     ): PolymarketSnapshot {
         val zoneId = ZoneId.of(city.zoneId)
-        val today = LocalDate.now(zoneId)
+        val cityNow = Instant.now().atZone(zoneId)
+        val today = cityNow.toLocalDate()
+        val localHour = cityNow.hour
         val targetDates = listOf(today, today.plusDays(1), today.plusDays(2))
 
         if (polyTempC == null) {
@@ -98,7 +101,10 @@ class PolymarketSource(
                 evaluateOpportunity(
                     market = market,
                     polyTempC = polyTempC,
-                    sigmaC = sigmaC
+                    sigmaC = sigmaC,
+                    city = city,
+                    cityToday = today,
+                    localHour = localHour
                 )
             }
             .sortedByDescending { it.executableEdge }
@@ -312,14 +318,28 @@ class PolymarketSource(
     private fun evaluateOpportunity(
         market: ParsedMarket,
         polyTempC: Double,
-        sigmaC: Double
+        sigmaC: Double,
+        city: CityConfig,
+        cityToday: LocalDate,
+        localHour: Int
     ): TraderOpportunity {
+        val horizonDays = resolveHorizonDays(
+            cityToday = cityToday,
+            targetDate = market.condition.targetDate
+        )
+        val calibration = TraderCalibration.resolve(
+            cityId = city.id,
+            horizonDays = horizonDays,
+            localHour = localHour
+        )
+
         val unitFactor = if (market.condition.unit == TempUnit.C) 1.0 else 9.0 / 5.0
-        val mean = if (market.condition.unit == TempUnit.C) polyTempC else celsiusToFahrenheit(polyTempC)
-        val sigma = max(0.6, sigmaC * unitFactor)
+        val calibratedMeanC = polyTempC + calibration.meanBiasC
+        val mean = if (market.condition.unit == TempUnit.C) calibratedMeanC else celsiusToFahrenheit(calibratedMeanC)
+        val sigma = max(0.6, sigmaC * unitFactor * calibration.sigmaMultiplier)
 
         val threshold = market.condition.threshold
-        val probabilityYes = when (market.condition.type) {
+        val rawProbabilityYes = when (market.condition.type) {
             MarketConditionType.GREATER_OR_EQUAL -> 1.0 - normalCdf((threshold - 0.5 - mean) / sigma)
             MarketConditionType.LESS_OR_EQUAL -> normalCdf((threshold + 0.5 - mean) / sigma)
             MarketConditionType.EXACT -> {
@@ -334,6 +354,10 @@ class PolymarketSource(
                 (upper - lower)
             }
         }.coerceIn(0.001, 0.999)
+        val probabilityYes = applyConfidenceWeight(
+            probability = rawProbabilityYes,
+            confidenceMultiplier = calibration.confidenceMultiplier
+        )
 
         val evYes = probabilityYes - market.yesPrice
         val evNo = (1.0 - probabilityYes) - market.noPrice
@@ -414,6 +438,23 @@ class PolymarketSource(
             volume24h = market.volume24h,
             spread = market.spread
         )
+    }
+
+    private fun resolveHorizonDays(
+        cityToday: LocalDate,
+        targetDate: LocalDate?
+    ): Int {
+        val effectiveTarget = targetDate ?: cityToday
+        return ChronoUnit.DAYS.between(cityToday, effectiveTarget).toInt().coerceIn(0, 2)
+    }
+
+    private fun applyConfidenceWeight(
+        probability: Double,
+        confidenceMultiplier: Double
+    ): Double {
+        val centered = probability - 0.5
+        val weighted = 0.5 + centered * confidenceMultiplier
+        return weighted.coerceIn(0.001, 0.999)
     }
 
     private fun estimateFillProbability(

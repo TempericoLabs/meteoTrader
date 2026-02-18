@@ -511,6 +511,14 @@ private fun TraderHeader(
             }
         }
 
+        ClickableHelpText(
+            text = "Calibracion local activa: ciudad + horizonte + franja",
+            topic = TraderHelpTopic.CALIBRATION,
+            color = MutedInk,
+            onHelpRequested = onHelpRequested,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+
         TraderHelpTerms(onHelpRequested = onHelpRequested)
     }
 }
@@ -876,24 +884,25 @@ private fun TraderHelpTerms(onHelpRequested: (TraderHelpTopic) -> Unit) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            HelpPill("CALIB", TraderHelpTopic.CALIBRATION, onHelpRequested, Modifier.weight(1f))
             HelpPill("EJEC", TraderHelpTopic.EXECUTABLE_EDGE, onHelpRequested, Modifier.weight(1f))
             HelpPill("BRUTO", TraderHelpTopic.RAW_EDGE, onHelpRequested, Modifier.weight(1f))
             HelpPill("COSTE", TraderHelpTopic.COSTS, onHelpRequested, Modifier.weight(1f))
-            HelpPill("FILL", TraderHelpTopic.FILL, onHelpRequested, Modifier.weight(1f))
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            HelpPill("FILL", TraderHelpTopic.FILL, onHelpRequested, Modifier.weight(1f))
             HelpPill("BET/PASS", TraderHelpTopic.ACTION, onHelpRequested, Modifier.weight(1f))
             HelpPill("LIQ", TraderHelpTopic.LIQUIDITY, onHelpRequested, Modifier.weight(1f))
             HelpPill("SPREAD", TraderHelpTopic.SPREAD, onHelpRequested, Modifier.weight(1f))
-            HelpPill("VERDE", TraderHelpTopic.GREEN, onHelpRequested, Modifier.weight(1f))
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            HelpPill("VERDE", TraderHelpTopic.GREEN, onHelpRequested, Modifier.weight(1f))
             HelpPill("AMARILLO", TraderHelpTopic.YELLOW, onHelpRequested, Modifier.weight(1f))
             HelpPill("BAJO", TraderHelpTopic.RED, onHelpRequested, Modifier.weight(1f))
             HelpPill("EDGE", TraderHelpTopic.EDGE, onHelpRequested, Modifier.weight(1f))
@@ -1015,6 +1024,10 @@ private enum class TraderHelpTopic(
     YES_NO(
         title = "YES y NO",
         message = "Comprar YES apuesta a que la condicion se cumple. Comprar NO apuesta a que no se cumple. Elige el lado donde tu estimacion supere claramente al precio del mercado."
+    ),
+    CALIBRATION(
+        title = "Calibracion local",
+        message = "El modelo ajusta sigma y ponderacion de probabilidad por ciudad, por horizonte (hoy/manana/pasado) y por franja horaria local para reducir sobreconfianza y mejorar precision."
     ),
     EXECUTABLE_EDGE(
         title = "Edge ejecutable",
