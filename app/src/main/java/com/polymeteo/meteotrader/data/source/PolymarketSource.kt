@@ -9,6 +9,9 @@ import com.polymeteo.meteotrader.data.model.TraderDirection
 import com.polymeteo.meteotrader.data.model.TraderOpportunity
 import com.polymeteo.meteotrader.data.model.TraderSignalLevel
 import com.polymeteo.meteotrader.util.celsiusToFahrenheit
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -31,6 +34,8 @@ class PolymarketSource(
     private val httpClient: HttpClient,
     private val json: Json = Json { ignoreUnknownKeys = true }
 ) {
+
+    private val minEdgeToShow = 0.005
 
     suspend fun fetch(
         city: CityConfig,
@@ -88,7 +93,14 @@ class PolymarketSource(
                     sigmaC = sigmaC
                 )
             }
+            .filter { it.expectedEdge > minEdgeToShow }
             .sortedByDescending { it.expectedEdge }
+
+        val traderError = if (opportunities.isEmpty()) {
+            "Sin edge positivo tras ajustes de liquidez/spread"
+        } else {
+            null
+        }
 
         return PolymarketSnapshot(
             query = buildQuery(city),
@@ -96,7 +108,7 @@ class PolymarketSource(
             marketsScanned = parsedMarkets.size,
             opportunities = opportunities,
             topOpportunity = opportunities.firstOrNull(),
-            error = null
+            error = traderError
         )
     }
 
@@ -104,57 +116,76 @@ class PolymarketSource(
         city: CityConfig,
         targetDates: List<LocalDate>,
         slugs: List<String>
-    ): DirectMarketsResult {
-        val markets = mutableListOf<ParsedMarket>()
-        val errors = mutableListOf<String>()
-
-        targetDates.zip(slugs).forEach { (date, slug) ->
-            val url = "https://gamma-api.polymarket.com/events?slug=$slug"
-            runCatching {
-                val response = httpClient.get(
-                    url,
-                    headers = mapOf(
-                        "User-Agent" to "PolyMeteo/0.1",
-                        "Accept" to "application/json"
-                    )
+    ): DirectMarketsResult = coroutineScope {
+        val perSlug = targetDates.zip(slugs).map { (date, slug) ->
+            async {
+                fetchDirectEventMarketsForSlug(
+                    city = city,
+                    date = date,
+                    slug = slug
                 )
-                if (response.code !in 200..299) {
-                    errors += "${slug}: HTTP ${response.code}"
-                    return@runCatching
-                }
-                val root = json.parseToJsonElement(response.body) as? JsonArray
-                    ?: run {
-                        errors += "${slug}: payload inválido"
-                        return@runCatching
-                    }
-
-                val event = root.firstOrNull() as? JsonObject
-                if (event == null) {
-                    errors += "${slug}: evento no encontrado"
-                    return@runCatching
-                }
-
-                val eventMarkets = event["markets"] as? JsonArray
-                if (eventMarkets == null) {
-                    errors += "${slug}: evento sin mercados"
-                    return@runCatching
-                }
-
-                eventMarkets
-                    .mapNotNull { it as? JsonObject }
-                    .mapNotNull { parseMarket(it, city) }
-                    .forEach { market ->
-                        // Refuerzo: limitar a los 3 días objetivo en caso de payload inesperado.
-                        if (market.condition.targetDate == null || market.condition.targetDate == date) {
-                            markets += market
-                        }
-                    }
-            }.onFailure { throwable ->
-                errors += "${slug}: ${throwable.message ?: "error"}"
             }
-        }
+        }.awaitAll()
 
-        return DirectMarketsResult(markets = markets, errors = errors)
+        DirectMarketsResult(
+            markets = perSlug.flatMap { it.markets },
+            errors = perSlug.flatMap { it.errors }
+        )
+    }
+
+    private suspend fun fetchDirectEventMarketsForSlug(
+        city: CityConfig,
+        date: LocalDate,
+        slug: String
+    ): DirectMarketsResult {
+        val url = "https://gamma-api.polymarket.com/events?slug=$slug"
+        return runCatching {
+            val response = httpClient.get(
+                url,
+                headers = mapOf(
+                    "User-Agent" to "PolyMeteo/0.1",
+                    "Accept" to "application/json"
+                ),
+                retries = 2
+            )
+            if (response.code !in 200..299) {
+                return DirectMarketsResult(
+                    markets = emptyList(),
+                    errors = listOf("${slug}: HTTP ${response.code}")
+                )
+            }
+            val root = json.parseToJsonElement(response.body) as? JsonArray
+                ?: return DirectMarketsResult(
+                    markets = emptyList(),
+                    errors = listOf("${slug}: payload inválido")
+                )
+
+            val event = root.firstOrNull() as? JsonObject
+                ?: return DirectMarketsResult(
+                    markets = emptyList(),
+                    errors = listOf("${slug}: evento no encontrado")
+                )
+
+            val eventMarkets = event["markets"] as? JsonArray
+                ?: return DirectMarketsResult(
+                    markets = emptyList(),
+                    errors = listOf("${slug}: evento sin mercados")
+                )
+
+            val markets = eventMarkets
+                .mapNotNull { it as? JsonObject }
+                .mapNotNull { parseMarket(it, city) }
+                .filter { market ->
+                    market.condition.targetDate == null || market.condition.targetDate == date
+                }
+
+            DirectMarketsResult(markets = markets, errors = emptyList())
+        }.getOrElse { throwable ->
+            DirectMarketsResult(
+                markets = emptyList(),
+                errors = listOf("${slug}: ${throwable.message ?: "error"}")
+            )
+        }
     }
 
     private suspend fun fetchFallbackSearchMarkets(city: CityConfig): List<ParsedMarket> {
@@ -199,11 +230,15 @@ class PolymarketSource(
             else -> obj.doubleOrNull("lastTradePrice") ?: obj.doubleOrNull("bestAsk") ?: 0.5
         }.coerceIn(0.001, 0.999)
 
-        val noPrice = when {
+        var noPrice = when {
             noIndex >= 0 && noIndex < prices.size -> prices[noIndex]
             prices.size >= 2 -> prices[1]
             else -> (1.0 - yesPrice)
         }.coerceIn(0.001, 0.999)
+
+        if (abs((yesPrice + noPrice) - 1.0) > 0.18) {
+            noPrice = (1.0 - yesPrice).coerceIn(0.001, 0.999)
+        }
 
         return ParsedMarket(
             id = obj.stringOrNull("id") ?: "unknown",
@@ -271,12 +306,14 @@ class PolymarketSource(
             }
         }
 
-        val liquidityPenalty = if ((market.liquidity ?: 0.0) < 900.0) 0.02 else 0.0
-        val adjustedEdge = edge - liquidityPenalty
+        val liquidityPenalty = if ((market.liquidity ?: 0.0) < 900.0) 0.020 else 0.0
+        val spreadPenalty = ((market.spread ?: 0.0).coerceAtLeast(0.0) * 0.45).coerceAtMost(0.03)
+        val volumePenalty = if ((market.volume24h ?: 0.0) < 700.0) 0.012 else 0.0
+        val adjustedEdge = edge - liquidityPenalty - spreadPenalty - volumePenalty
 
         val signal = when {
-            adjustedEdge >= 0.10 -> TraderSignalLevel.GREEN
-            adjustedEdge >= 0.05 -> TraderSignalLevel.YELLOW
+            adjustedEdge >= 0.12 -> TraderSignalLevel.GREEN
+            adjustedEdge >= 0.06 -> TraderSignalLevel.YELLOW
             else -> TraderSignalLevel.RED
         }
 
@@ -287,7 +324,7 @@ class PolymarketSource(
             yesPrice = market.yesPrice,
             noPrice = market.noPrice,
             modelProbabilityYes = probabilityYes,
-            expectedEdge = edge,
+            expectedEdge = adjustedEdge,
             recommendedBuy = recommendedBuy,
             direction = direction,
             signal = signal,
