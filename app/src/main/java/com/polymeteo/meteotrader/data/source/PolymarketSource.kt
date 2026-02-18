@@ -35,8 +35,6 @@ class PolymarketSource(
     private val json: Json = Json { ignoreUnknownKeys = true }
 ) {
 
-    private val minEdgeToShow = 0.005
-
     suspend fun fetch(
         city: CityConfig,
         polyTempC: Double?,
@@ -83,9 +81,9 @@ class PolymarketSource(
             )
         }
 
-        val nearestDateMarkets = parsedMarkets.filterByNearestDate(today)
+        val marketWindow = parsedMarkets.filterByTargetDates(targetDates.toSet())
         val sigmaC = estimateSigmaC(forecastDailyMaxC)
-        val opportunities = nearestDateMarkets
+        val opportunities = marketWindow
             .map { market ->
                 evaluateOpportunity(
                     market = market,
@@ -93,22 +91,19 @@ class PolymarketSource(
                     sigmaC = sigmaC
                 )
             }
-            .filter { it.expectedEdge > minEdgeToShow }
             .sortedByDescending { it.expectedEdge }
 
-        val traderError = if (opportunities.isEmpty()) {
-            "Sin edge positivo tras ajustes de liquidez/spread"
-        } else {
-            null
-        }
+        val topToday = opportunities
+            .filter { it.condition.targetDate == null || it.condition.targetDate == today }
+            .maxByOrNull { it.expectedEdge }
 
         return PolymarketSnapshot(
             query = buildQuery(city),
             fetchedAt = Instant.now(),
             marketsScanned = parsedMarkets.size,
             opportunities = opportunities,
-            topOpportunity = opportunities.firstOrNull(),
-            error = traderError
+            topOpportunity = topToday ?: opportunities.firstOrNull(),
+            error = null
         )
     }
 
@@ -467,22 +462,9 @@ class PolymarketSource(
             .lowercase(Locale.US)
     }
 
-    private fun List<ParsedMarket>.filterByNearestDate(cityToday: LocalDate): List<ParsedMarket> {
+    private fun List<ParsedMarket>.filterByTargetDates(targetDates: Set<LocalDate>): List<ParsedMarket> {
         if (isEmpty()) return emptyList()
-
-        val datedMarkets = this.filter { it.condition.targetDate != null }
-        if (datedMarkets.isEmpty()) return this
-
-        val nearestDate = datedMarkets
-            .minByOrNull { abs(java.time.temporal.ChronoUnit.DAYS.between(cityToday, it.condition.targetDate)) }
-            ?.condition
-            ?.targetDate
-
-        return if (nearestDate == null) {
-            this
-        } else {
-            this.filter { it.condition.targetDate == nearestDate }
-        }
+        return this.filter { it.condition.targetDate == null || it.condition.targetDate in targetDates }
     }
 
     private fun estimateSigmaC(valuesC: List<Double>): Double {

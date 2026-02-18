@@ -31,18 +31,21 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.polymeteo.meteotrader.data.model.CityWeatherData
 import com.polymeteo.meteotrader.data.model.ForecastSourceResult
 import com.polymeteo.meteotrader.data.model.SourceStatus
+import com.polymeteo.meteotrader.data.model.TempUnit
 import com.polymeteo.meteotrader.data.model.TraderDirection
 import com.polymeteo.meteotrader.data.model.TraderOpportunity
 import com.polymeteo.meteotrader.data.model.TraderSignalLevel
@@ -52,6 +55,7 @@ import com.polymeteo.meteotrader.ui.theme.MutedInk
 import com.polymeteo.meteotrader.ui.theme.Negative
 import com.polymeteo.meteotrader.ui.theme.Neutral
 import com.polymeteo.meteotrader.ui.theme.Positive
+import com.polymeteo.meteotrader.util.convertTemperature
 import com.polymeteo.meteotrader.util.controlTempInUnit
 import com.polymeteo.meteotrader.util.directionLabel
 import com.polymeteo.meteotrader.util.formatDelta
@@ -62,6 +66,10 @@ import com.polymeteo.meteotrader.util.metarCurrentInUnit
 import com.polymeteo.meteotrader.util.metarDeltaInUnit
 import com.polymeteo.meteotrader.util.metarPreviousInUnit
 import com.polymeteo.meteotrader.util.polyTempInUnit
+import java.time.Duration
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -124,6 +132,42 @@ fun CityDetailScreen(
             val openExternalUrl: (String) -> Unit = { url ->
                 runCatching { uriHandler.openUri(url) }
             }
+            val observationDateTime = cityData.metar.current?.observedAt
+                ?.formatInZone(cityData.city.zoneId, "dd-MM-yyyy HH:mm")
+            val metarActualValue = appendObservationTime(
+                temperature = formatTemperature(cityData.metarCurrentInUnit(), unit),
+                observationDateTime = observationDateTime
+            )
+            val metarPreviousValue = appendMetarElapsedHours(
+                temperature = formatTemperature(cityData.metarPreviousInUnit(), unit),
+                currentObservedAt = cityData.metar.current?.observedAt,
+                previousObservedAt = cityData.metar.previousSameDay?.observedAt
+            )
+            val controlWithSecondaryUnit = formatTemperatureWithAlternateUnit(
+                valueInDisplayUnit = cityData.controlTempInUnit(),
+                displayUnit = unit
+            )
+            val polyWithSecondaryUnit = formatTemperatureWithAlternateUnit(
+                valueInDisplayUnit = cityData.polyTempInUnit(),
+                displayUnit = unit
+            )
+            val cityZoneId = ZoneId.of(cityData.city.zoneId)
+            val cityToday = LocalDate.now(cityZoneId)
+            val dayTabs = listOf(
+                TraderDayTab(title = "Hoy", date = cityToday),
+                TraderDayTab(title = "Mañana", date = cityToday.plusDays(1)),
+                TraderDayTab(title = "Pasado", date = cityToday.plusDays(2))
+            )
+            var selectedDayIndex by rememberSaveable(cityData.city.id) { mutableStateOf(0) }
+            val selectedTab = dayTabs.getOrElse(selectedDayIndex) { dayTabs.first() }
+            val selectedOpportunities = cityData.polymarket.opportunities
+                .filter { opportunity ->
+                    val targetDate = opportunity.condition.targetDate
+                    (targetDate == null && selectedTab.date == cityToday) || targetDate == selectedTab.date
+                }
+                .sortedByDescending { it.expectedEdge }
+            val selectedTopOpportunity = selectedOpportunities.firstOrNull()
+            val opportunitiesByDate = cityData.polymarket.opportunities.groupBy { it.condition.targetDate }
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -144,15 +188,17 @@ fun CityDetailScreen(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         DetailPair("Hora local", cityData.localTime)
-                        DetailPair("METAR actual", formatTemperature(cityData.metarCurrentInUnit(), unit))
-                        DetailPair("METAR anterior", formatTemperature(cityData.metarPreviousInUnit(), unit))
+                        DetailPair("METAR actual", metarActualValue)
+                        DetailPair("METAR anterior", metarPreviousValue)
                         DetailPair("Diferencia", formatDelta(cityData.metarDeltaInUnit(), unit))
+                        DetailPair("Temp estación control", controlWithSecondaryUnit)
                         DetailPair(
-                            "Observación",
-                            cityData.metar.current?.observedAt?.formatInZone(cityData.city.zoneId) ?: "--"
+                            label = "PolyTEMP",
+                            value = polyWithSecondaryUnit,
+                            labelColor = Positive,
+                            valueColor = Positive,
+                            valueFontWeight = FontWeight.Bold
                         )
-                        DetailPair("Temp estación control", formatTemperature(cityData.controlTempInUnit(), unit))
-                        DetailPair("PolyTEMP", formatTemperature(cityData.polyTempInUnit(), unit))
                         SourceLinkRow(
                             label = "Fuente METAR",
                             url = cityData.metar.sourceUrl,
@@ -189,13 +235,24 @@ fun CityDetailScreen(
                 item {
                     TraderHeader(
                         cityData = cityData,
+                        selectedTopOpportunity = selectedTopOpportunity,
+                        selectedDayTitle = selectedTab.title,
                         onHelpRequested = { helpTopic = it }
                     )
                 }
 
-                if (cityData.polymarket.opportunities.isNotEmpty()) {
+                item {
+                    TraderDaySelector(
+                        tabs = dayTabs,
+                        selectedIndex = selectedDayIndex,
+                        onSelectedIndexChanged = { selectedDayIndex = it },
+                        opportunitiesByDate = opportunitiesByDate
+                    )
+                }
+
+                if (selectedOpportunities.isNotEmpty()) {
                     items(
-                        cityData.polymarket.opportunities.take(12),
+                        selectedOpportunities.take(12),
                         key = { it.marketId }
                     ) { opportunity ->
                         TraderOpportunityRow(
@@ -214,7 +271,8 @@ fun CityDetailScreen(
                                 .padding(12.dp)
                         ) {
                             Text(
-                                text = cityData.polymarket.error ?: "Sin mercados detectados",
+                                text = cityData.polymarket.error
+                                    ?: "Sin mercados para ${selectedTab.title.lowercase()}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MutedInk
                             )
@@ -280,7 +338,13 @@ fun CityDetailScreen(
 }
 
 @Composable
-private fun DetailPair(label: String, value: String) {
+private fun DetailPair(
+    label: String,
+    value: String,
+    labelColor: Color = MutedInk,
+    valueColor: Color = MaterialTheme.colorScheme.onSurface,
+    valueFontWeight: FontWeight = FontWeight.Normal
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -290,17 +354,56 @@ private fun DetailPair(label: String, value: String) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = MutedInk,
+            color = labelColor,
             modifier = Modifier.weight(1f)
         )
         Text(
             text = value,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = valueFontWeight),
+            color = valueColor,
             modifier = Modifier.weight(1f)
         )
     }
 }
+
+private fun appendObservationTime(
+    temperature: String,
+    observationDateTime: String?
+): String {
+    if (observationDateTime.isNullOrBlank() || temperature == "--") return temperature
+    return "$temperature ($observationDateTime)"
+}
+
+private fun appendMetarElapsedHours(
+    temperature: String,
+    currentObservedAt: Instant?,
+    previousObservedAt: Instant?
+): String {
+    if (temperature == "--" || currentObservedAt == null || previousObservedAt == null) return temperature
+    val hours = elapsedHoursRounded(currentObservedAt, previousObservedAt)
+    return "$temperature (Hace $hours horas)"
+}
+
+private fun elapsedHoursRounded(currentObservedAt: Instant, previousObservedAt: Instant): Long {
+    val minutes = kotlin.math.abs(Duration.between(previousObservedAt, currentObservedAt).toMinutes())
+    if (minutes <= 0) return 0
+    return maxOf(1L, (minutes + 30L) / 60L)
+}
+
+private fun formatTemperatureWithAlternateUnit(
+    valueInDisplayUnit: Double?,
+    displayUnit: TempUnit
+): String {
+    if (valueInDisplayUnit == null) return "--"
+    val otherUnit = if (displayUnit == TempUnit.C) TempUnit.F else TempUnit.C
+    val otherValue = convertTemperature(valueInDisplayUnit, from = displayUnit, to = otherUnit)
+    return "${formatTemperature(valueInDisplayUnit, displayUnit)} (${formatTemperature(otherValue, otherUnit)})"
+}
+
+private data class TraderDayTab(
+    val title: String,
+    val date: LocalDate
+)
 
 @Composable
 private fun SourceLinkRow(
@@ -349,6 +452,8 @@ private fun SourceLinkRow(
 @Composable
 private fun TraderHeader(
     cityData: CityWeatherData,
+    selectedTopOpportunity: TraderOpportunity?,
+    selectedDayTitle: String,
     onHelpRequested: (TraderHelpTopic) -> Unit
 ) {
     Column(
@@ -375,16 +480,76 @@ private fun TraderHeader(
             style = MaterialTheme.typography.labelSmall,
             color = MutedInk
         )
-        cityData.polymarket.topOpportunity?.let { top ->
+        selectedTopOpportunity?.let { top ->
             Text(
-                text = "Top edge: ${directionLabel(top.direction)} • ${top.recommendedBuy} ${formatPercent(top.expectedEdge)}",
+                text = "Top edge ($selectedDayTitle): ${directionLabel(top.direction)} • ${top.recommendedBuy} ${formatPercent(top.expectedEdge)}",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(top = 6.dp)
             )
+        } ?: Text(
+            text = "Sin oportunidades en $selectedDayTitle",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MutedInk,
+            modifier = Modifier.padding(top = 6.dp)
+        )
+
+        cityData.polymarket.topOpportunity?.let { topToday ->
+            if (selectedTopOpportunity?.marketId != topToday.marketId) {
+                Text(
+                    text = "Referencia hoy: ${directionLabel(topToday.direction)} • ${topToday.recommendedBuy} ${formatPercent(topToday.expectedEdge)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MutedInk,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
         }
 
         TraderHelpTerms(onHelpRequested = onHelpRequested)
+    }
+}
+
+@Composable
+private fun TraderDaySelector(
+    tabs: List<TraderDayTab>,
+    selectedIndex: Int,
+    onSelectedIndexChanged: (Int) -> Unit,
+    opportunitiesByDate: Map<LocalDate?, List<TraderOpportunity>>
+) {
+    val todayDate = tabs.firstOrNull()?.date
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        tabs.forEachIndexed { index, tab ->
+            val count = if (tab.date == todayDate) {
+                (opportunitiesByDate[tab.date]?.size ?: 0) + (opportunitiesByDate[null]?.size ?: 0)
+            } else {
+                opportunitiesByDate[tab.date]?.size ?: 0
+            }
+            val isSelected = selectedIndex == index
+            val border = if (isSelected) Color(0xFF8FC8FF) else Color(0x33FFFFFF)
+            val bg = if (isSelected) Color(0x1F2C78FF) else DarkPanel
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .background(bg)
+                    .border(1.dp, border)
+                    .clickable { onSelectedIndexChanged(index) }
+                    .padding(vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "${tab.title} ($count)",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                    ),
+                    color = if (isSelected) Color(0xFF8FC8FF) else MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
     }
 }
 
