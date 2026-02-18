@@ -208,6 +208,12 @@ private fun SummaryCard(
         report.totalPnlUnits < 0.0 -> Negative
         else -> MutedInk
     }
+    val guardrailColor = if (report.guardrailKillSwitchActive) Negative else Positive
+    val dailyPnlColor = when {
+        (report.guardrailDailyPnlUnits ?: 0.0) > 0.0 -> Positive
+        (report.guardrailDailyPnlUnits ?: 0.0) < 0.0 -> Negative
+        else -> MutedInk
+    }
 
     Column(
         modifier = Modifier
@@ -278,6 +284,27 @@ private fun SummaryCard(
         MetricLine("Expected PnL", formatUnits(report.expectedPnlUnits), MutedInk, BacktestHelpTopic.EXPECTED_PNL, onHelpRequested)
         MetricLine("Realized PnL", formatUnits(report.totalPnlUnits), pnlColor, BacktestHelpTopic.REALIZED_PNL, onHelpRequested)
         MetricLine("Gap ejecucion", formatUnits(report.executionGapUnits), pnlColor, BacktestHelpTopic.EXEC_GAP, onHelpRequested)
+        MetricLine(
+            "Guardrails",
+            if (report.guardrailKillSwitchActive) "KILL-SWITCH ON" else "ACTIVO/OK",
+            guardrailColor,
+            BacktestHelpTopic.GUARDRAILS,
+            onHelpRequested
+        )
+        MetricLine(
+            "PnL dia UTC",
+            "${formatUnits(report.guardrailDailyPnlUnits)} (${report.guardrailDayUtc ?: "--"})",
+            dailyPnlColor,
+            BacktestHelpTopic.DAILY_LIMITS,
+            onHelpRequested
+        )
+        MetricLine(
+            "Loss streak",
+            report.guardrailConsecutiveLosses?.toString() ?: "--",
+            MutedInk,
+            BacktestHelpTopic.KILL_SWITCH,
+            onHelpRequested
+        )
         MetricLine("Stake total", formatUnits(report.totalStakeUnits), MutedInk, BacktestHelpTopic.STAKE, onHelpRequested)
         MetricLine("ROI", formatPercent(report.roi), MutedInk, BacktestHelpTopic.ROI, onHelpRequested)
         MetricLine("Hit-rate", formatPercent(report.hitRate), MutedInk, BacktestHelpTopic.HIT_RATE, onHelpRequested)
@@ -690,6 +717,15 @@ private fun BacktestHelpTerms(onHelpRequested: (BacktestHelpTopic) -> Unit) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            HelpPill("Risk", BacktestHelpTopic.GUARDRAILS, onHelpRequested, Modifier.weight(1f))
+            HelpPill("Diario", BacktestHelpTopic.DAILY_LIMITS, onHelpRequested, Modifier.weight(1f))
+            HelpPill("MktLoss", BacktestHelpTopic.MARKET_LOSS, onHelpRequested, Modifier.weight(1f))
+            HelpPill("Kill", BacktestHelpTopic.KILL_SWITCH, onHelpRequested, Modifier.weight(1f))
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
             HelpPill("Trades", BacktestHelpTopic.TRADES, onHelpRequested, Modifier.weight(1f))
             HelpPill("Exec", BacktestHelpTopic.EXECUTED, onHelpRequested, Modifier.weight(1f))
             HelpPill("NoFill", BacktestHelpTopic.NO_FILL, onHelpRequested, Modifier.weight(1f))
@@ -767,6 +803,22 @@ private enum class BacktestHelpTopic(
     val title: String,
     val message: String
 ) {
+    GUARDRAILS(
+        title = "Guardrails",
+        message = "Guardrails son reglas obligatorias de riesgo. Si se incumple una, el paper trading bloquea la entrada."
+    ),
+    DAILY_LIMITS(
+        title = "Limites diarios",
+        message = "Limita trades y stake por dia UTC. Tambien detiene entradas si la perdida diaria supera el maximo permitido."
+    ),
+    MARKET_LOSS(
+        title = "Max perdida por mercado",
+        message = "Si un mercado acumula perdida por encima del umbral, se bloquean nuevas entradas en ese mercado."
+    ),
+    KILL_SWITCH(
+        title = "Kill-switch",
+        message = "Se activa automaticamente al superar perdida diaria o racha de perdidas. Mientras este activo, no se permite abrir nuevos trades."
+    ),
     TRADES(
         title = "Trades",
         message = "Trades es el numero total de operaciones registradas para evaluar la estrategia."

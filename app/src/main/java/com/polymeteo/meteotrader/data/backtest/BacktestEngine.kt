@@ -33,6 +33,7 @@ import kotlinx.serialization.json.contentOrNull
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 import java.security.MessageDigest
@@ -59,14 +60,6 @@ class BacktestEngine(
         var changed = false
         var historicalImportCompletedAtEpochMs = currentDataset.historicalImportCompletedAtEpochMs
 
-        val newRecords = buildSnapshotRecords(cities)
-        for (record in newRecords) {
-            if (!recordsById.containsKey(record.id)) {
-                recordsById[record.id] = record
-                changed = true
-            }
-        }
-
         if (shouldRunHistoricalImport(currentDataset, recordsById.values.toList())) {
             val import = importHistoricalSeed(recordsById.values.toList())
             import.records.forEach { record ->
@@ -80,6 +73,43 @@ class BacktestEngine(
                 historicalImportCompletedAtEpochMs = now.toEpochMilli()
                 changed = true
             }
+        }
+
+        val newRecords = buildSnapshotRecords(cities)
+        val guardrailDayUtc = now.atZone(ZoneOffset.UTC).toLocalDate()
+        var guardrailState = RiskGuardrails.buildState(
+            allRecords = recordsById.values.toList(),
+            day = guardrailDayUtc,
+            config = RISK_GUARDRAIL_CONFIG
+        )
+        if (guardrailState.killSwitchActive) {
+            warnings += "Risk guardrails: kill-switch activo (${guardrailState.day} UTC)"
+        }
+
+        var blockedByGuardrails = 0
+        newRecords
+            .asSequence()
+            .filter { !recordsById.containsKey(it.id) }
+            .sortedByDescending { it.executableEdge ?: it.expectedEdge }
+            .forEach { record ->
+                val blockReason = RiskGuardrails.evaluate(
+                    record = record,
+                    state = guardrailState,
+                    config = RISK_GUARDRAIL_CONFIG
+                )
+                if (blockReason != null) {
+                    blockedByGuardrails += 1
+                    if (blockedByGuardrails <= MAX_GUARDRAIL_WARNING_DETAILS) {
+                        warnings += "Guardrail: ${blockReason.label} bloquea ${record.cityName} (${record.marketId})"
+                    }
+                    return@forEach
+                }
+                recordsById[record.id] = record
+                guardrailState = RiskGuardrails.accept(guardrailState, record)
+                changed = true
+            }
+        if (blockedByGuardrails > 0) {
+            warnings += "Risk guardrails: $blockedByGuardrails entradas bloqueadas (${guardrailDayUtc} UTC)"
         }
 
         val settled = settlePending(recordsById.values.toList())
@@ -625,6 +655,13 @@ class BacktestEngine(
 
     private fun buildReport(records: List<BacktestRecord>, warnings: List<String>): BacktestReport {
         val now = nowProvider()
+        val guardrailDayUtc = now.atZone(ZoneOffset.UTC).toLocalDate()
+        val guardrailState = RiskGuardrails.buildState(
+            allRecords = records,
+            day = guardrailDayUtc,
+            config = RISK_GUARDRAIL_CONFIG
+        )
+
         val settled = records.filter {
             it.settled &&
                 it.actualYesOutcome != null
@@ -733,6 +770,16 @@ class BacktestEngine(
                 )
             }
 
+        val reportWarnings = buildList {
+            addAll(warnings)
+            if (guardrailState.killSwitchActive) {
+                add("Risk guardrails: kill-switch activo (${guardrailState.day} UTC)")
+            }
+            if (guardrailState.realizedPnlUnits <= -RISK_GUARDRAIL_CONFIG.maxDailyLossUnits) {
+                add("Risk guardrails: perdida diaria maxima alcanzada (${String.format(Locale.US, "%.3f", guardrailState.realizedPnlUnits)}u)")
+            }
+        }.distinct()
+
         return BacktestReport(
             generatedAt = now,
             totalTrades = records.size,
@@ -754,6 +801,10 @@ class BacktestEngine(
             totalPnlUnits = totalPnl,
             expectedPnlUnits = expectedPnl,
             executionGapUnits = executionGap,
+            guardrailDayUtc = guardrailState.day,
+            guardrailKillSwitchActive = guardrailState.killSwitchActive,
+            guardrailDailyPnlUnits = guardrailState.realizedPnlUnits,
+            guardrailConsecutiveLosses = guardrailState.consecutiveExecutedLosses,
             avgPnlUnits = if (executedCount > 0) totalPnl / executedCount else null,
             roi = if (totalStake > 0.0) totalPnl / totalStake else null,
             hitRate = if (executedCount > 0) hitCount.toDouble() / executedCount.toDouble() else null,
@@ -763,7 +814,7 @@ class BacktestEngine(
             cityStats = cityStats,
             strategyStats = strategyStats,
             recentSettlements = recentSettlements,
-            warnings = warnings
+            warnings = reportWarnings
         )
     }
 
@@ -877,6 +928,7 @@ class BacktestEngine(
         private const val MAX_SETTLE_ATTEMPTS = 5
         private const val MAX_SETTLEMENT_QUERIES_PER_RUN = 24
         private const val MAX_SETTLEMENT_PARALLELISM = 4
+        private const val MAX_GUARDRAIL_WARNING_DETAILS = 8
 
         private const val HISTORICAL_DAYS_BACK = 7L
         private const val HISTORICAL_ENTRY_HOUR_LOCAL = 9
@@ -885,5 +937,14 @@ class BacktestEngine(
         private const val MAX_HISTORICAL_IMPORT_RECORDS = 220
         private const val PRICE_WINDOW_SECONDS = 5 * 60 * 60L
         private val VALID_TEMP_RANGE_C = -80.0..65.0
+        private val RISK_GUARDRAIL_CONFIG = RiskGuardrailConfig(
+            maxTradesPerDay = 24,
+            maxStakePerDayUnits = 10.0,
+            maxDailyLossUnits = 2.25,
+            maxLossPerMarketUnits = 0.90,
+            minLiquidity = 900.0,
+            maxSpread = 0.045,
+            maxConsecutiveLosses = 4
+        )
     }
 }
