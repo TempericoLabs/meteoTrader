@@ -1,0 +1,474 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Manual de Uso PolyMeteo Trader</title>
+  <style>
+    :root {
+      --bg: #081126;
+      --panel: #101b35;
+      --panel-2: #142241;
+      --ink: #e9f0ff;
+      --muted: #a9b7d8;
+      --line: #2c3e66;
+      --accent: #76b7ff;
+      --green: #39d98a;
+      --yellow: #ffc857;
+      --red: #ff6b6b;
+      --cyan: #4de2ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Inter", "Roboto", Arial, sans-serif;
+      background: radial-gradient(circle at top right, #122856 0%, var(--bg) 50%);
+      color: var(--ink);
+      line-height: 1.55;
+    }
+    .wrap {
+      width: min(1100px, 92vw);
+      margin: 28px auto 56px;
+    }
+    .hero {
+      background: linear-gradient(135deg, #143166, #0f2349);
+      border: 1px solid #3d5f9b;
+      border-radius: 14px;
+      padding: 24px;
+    }
+    h1, h2, h3 { margin: 0 0 12px; line-height: 1.2; }
+    h1 { font-size: 2rem; color: #dfeeff; }
+    h2 { font-size: 1.35rem; color: #bdddff; margin-top: 28px; }
+    h3 { font-size: 1.05rem; color: #d8e7ff; margin-top: 18px; }
+    p, li { color: var(--ink); }
+    .muted { color: var(--muted); }
+    .pill {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: .8rem;
+      font-weight: 700;
+      letter-spacing: .02em;
+      border: 1px solid var(--line);
+      background: #0f2348;
+      color: #d4e8ff;
+    }
+    .ok { color: var(--green); font-weight: 700; }
+    .warn { color: var(--yellow); font-weight: 700; }
+    .bad { color: var(--red); font-weight: 700; }
+    .box {
+      margin-top: 14px;
+      padding: 14px;
+      border-radius: 12px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+    }
+    .box-alt {
+      margin-top: 10px;
+      padding: 12px;
+      border-radius: 10px;
+      background: var(--panel-2);
+      border: 1px solid #324d80;
+    }
+    .toc a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .toc a:hover { text-decoration: underline; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+      font-size: .96rem;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 10px;
+      vertical-align: top;
+    }
+    th {
+      background: #11274f;
+      color: #cde4ff;
+      text-align: left;
+    }
+    code {
+      background: #0d1f40;
+      border: 1px solid #2b4678;
+      border-radius: 6px;
+      padding: 1px 6px;
+      color: #d8ebff;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: .9em;
+    }
+    .two-col {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 12px;
+      margin-top: 10px;
+    }
+    .badge {
+      display: inline-block;
+      margin-right: 8px;
+      margin-bottom: 6px;
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: .85rem;
+      border: 1px solid #34558f;
+      background: #10254c;
+      color: #d0e4ff;
+    }
+    .footer {
+      margin-top: 34px;
+      color: var(--muted);
+      font-size: .92rem;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <h1>Manual de Uso Completo: PolyMeteo Trader</h1>
+      <p class="muted">
+        Versión viva del manual para la app Android de soporte a mercados meteorológicos de Polymarket.
+        Documento didáctico para usuarios sin experiencia previa en apuestas ni trading.
+      </p>
+      <p>
+        <span class="pill">Objetivo</span>
+        Aprender a interpretar datos meteorológicos y decisiones de mercado con rigor para reducir errores y operar con control de riesgo.
+      </p>
+    </section>
+
+    <section id="indice" class="box toc">
+      <h2>Índice</h2>
+      <ol>
+        <li><a href="#intro-polymarket">Qué es Polymarket y por qué esta app aporta ventaja</a></li>
+        <li><a href="#arranque">Primer arranque y flujo general</a></li>
+        <li><a href="#pantalla-ciudades">Pantalla CIUDADES (vista general)</a></li>
+        <li><a href="#pantalla-detalle">Pantalla DETALLE de ciudad</a></li>
+        <li><a href="#pantalla-paper">Pantalla Paper Trading (simulación end-to-end)</a></li>
+        <li><a href="#ejemplo-londres">Ejemplo guiado completo con Londres</a></li>
+        <li><a href="#demo-mode">Modo DEMO (pruebas rápidas de riesgo)</a></li>
+        <li><a href="#buenas-practicas">Buenas prácticas para principiantes</a></li>
+        <li><a href="#glosario">Glosario alfabético</a></li>
+      </ol>
+    </section>
+
+    <section id="intro-polymarket">
+      <h2>1) Qué es Polymarket y por qué esta app aporta ventaja</h2>
+      <div class="box">
+        <p>
+          Polymarket es un mercado de predicción: compras probabilidades sobre eventos futuros.
+          En esta app trabajamos mercados de temperatura máxima diaria por ciudad.
+        </p>
+        <p>
+          En términos simples:
+        </p>
+        <ul>
+          <li>Si compras <code>YES</code> a precio 0.40 y el evento se cumple, cobras 1.00 (ganancia bruta 0.60).</li>
+          <li>Si no se cumple, ese contrato vale 0.00 (pierdes tu coste de entrada).</li>
+          <li>La clave no es “acertar siempre”, sino entrar cuando el precio de mercado está desalineado con tu probabilidad real.</li>
+        </ul>
+      </div>
+
+      <div class="box-alt">
+        <p><strong>Por qué PolyMeteo es vital:</strong></p>
+        <ul>
+          <li>Consolida en una sola vista METAR, estación de control y múltiples APIs de pronóstico.</li>
+          <li>Calcula <code>PolyTEMP</code> como consenso de modelos para evitar depender de una sola fuente.</li>
+          <li>Convierte el edge teórico en <strong>edge ejecutable</strong> (desconta coste, spread, liquidez y fill).</li>
+          <li>Añade <strong>guardrails obligatorios de riesgo</strong> para bloquear entradas peligrosas.</li>
+          <li>Incluye <strong>Paper Trading end-to-end</strong> para auditar si lo esperado se transforma en resultado real.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="arranque">
+      <h2>2) Primer arranque y flujo general</h2>
+      <div class="box">
+        <ol>
+          <li>Abre la app. Carga 14 ciudades en grid 7x2.</li>
+          <li>Revisa rápido ciudades con mejor señal de oportunidad.</li>
+          <li>Entra a una ciudad (ej. Londres) para análisis profundo.</li>
+          <li>Consulta <code>Trader Mode</code> para hoy/mañana/pasado.</li>
+          <li>Si hay decisión potencial, valida riesgo y ejecución.</li>
+          <li>Revisa <code>Paper Trading</code> para comparar esperado vs realizado y ajustar disciplina.</li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="pantalla-ciudades">
+      <h2>3) Pantalla CIUDADES (visión táctica rápida)</h2>
+      <div class="box">
+        <h3>Cabecera</h3>
+        <ul>
+          <li><code>PolyMeteo</code>: título.</li>
+          <li><code>Actualizado: HH:mm:ss UTC</code>: instante de la última carga global.</li>
+          <li>Botón <strong>Refrescar</strong>: recarga todo.</li>
+          <li>Botón <strong>estadísticas</strong>: abre <code>Paper Trading</code>.</li>
+        </ul>
+
+        <h3>Banner superior</h3>
+        <ul>
+          <li><code>Top Ejecutables</code>: top oportunidades por edge ejecutable, no por edge bruto.</li>
+          <li>Formato: ciudad + BET/PASS + dirección + lado + porcentaje.</li>
+        </ul>
+
+        <h3>Tarjeta por ciudad (cada celda del grid)</h3>
+        <table>
+          <thead>
+            <tr><th>Campo</th><th>Qué es</th><th>Cómo usarlo</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>Ciudad</code></td><td>Nombre del mercado local.</td><td>Selecciona ciudad para detalle.</td></tr>
+            <tr><td><code>Hora local</code></td><td>Hora de la ciudad.</td><td>Crítico para saber fase diaria (mañana/tarde).</td></tr>
+            <tr><td><code>M</code></td><td>METAR actual.</td><td>Pulso real de aeropuerto (dato oficial operativo).</td></tr>
+            <tr><td><code>Δ</code></td><td>Diferencia vs METAR anterior.</td><td>Momentum térmico de corto plazo.</td></tr>
+            <tr><td><code>S</code></td><td>Temp estación control (Wunderground).</td><td>Referencia clave de verificación del mercado.</td></tr>
+            <tr><td><code>P</code></td><td>PolyTEMP.</td><td>Consenso de máximas previstas.</td></tr>
+            <tr><td>Chip trader</td><td>Dirección + BET/PASS + lado + edge ejecutable.</td><td>Filtro rápido de oportunidades explotables.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="pantalla-detalle">
+      <h2>4) Pantalla DETALLE de ciudad</h2>
+      <div class="box">
+        <h3>Bloque METAR / Estación / PolyTEMP</h3>
+        <ul>
+          <li><code>Hora local</code></li>
+          <li><code>METAR actual</code>: valor + fecha/hora de observación.</li>
+          <li><code>METAR anterior</code>: valor + “Hace X horas”.</li>
+          <li><code>Diferencia</code>: cambio térmico actual vs previo.</li>
+          <li><code>Temp estación control</code>: máxima actual acumulada del día en estación de control.</li>
+          <li><code>PolyTEMP</code>: resaltado en verde/negrita; incluye unidad principal y alternativa.</li>
+          <li><code>Fuente METAR</code> y <code>Fuente estación</code>: enlaces clicables para auditoría externa.</li>
+        </ul>
+
+        <h3>Bloque Forecast por proveedor</h3>
+        <ul>
+          <li><code>Fuente</code>, <code>Now</code>, <code>Max</code>, <code>Estado</code>.</li>
+          <li>Si una API falla, se muestra error para transparencia.</li>
+        </ul>
+
+        <h3>Bloque Trader Mode</h3>
+        <ul>
+          <li><code>Query</code> y <code>Mercados evaluados</code>.</li>
+          <li><code>Top ejecutable</code> del día seleccionado + referencia de hoy.</li>
+          <li><code>Calibración local activa</code>: ajuste por ciudad/horizonte/franja horaria.</li>
+          <li>Selector <code>Hoy / Mañana / Pasado</code>.</li>
+        </ul>
+
+        <h3>Cada oportunidad de mercado incluye</h3>
+        <table>
+          <thead>
+            <tr><th>Campo</th><th>Significado</th><th>Uso práctico</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>OVER/UNDER/RANGE</code></td><td>Tesis térmica.</td><td>Alinea lectura meteorológica con tipo de pregunta.</td></tr>
+            <tr><td><code>YES/NO</code></td><td>Lado recomendado.</td><td>Contrato a considerar si el edge ejecutable es suficiente.</td></tr>
+            <tr><td><code>VERDE/AMARILLO/BAJO</code></td><td>Calidad de oportunidad.</td><td>Prioriza VERDE; AMARILLO con tamaño menor.</td></tr>
+            <tr><td><code>BET / PASS</code></td><td>Decisión final del motor.</td><td>BET si supera umbrales de ejecución/riesgo.</td></tr>
+            <tr><td><code>Exec</code></td><td>Edge ejecutable.</td><td>Métrica principal para entrada realista.</td></tr>
+            <tr><td><code>Bruto</code></td><td>Edge sin costes.</td><td>Valida idea base.</td></tr>
+            <tr><td><code>Costes</code></td><td>Fee+spread+liquidez.</td><td>Mide fricción de mercado.</td></tr>
+            <tr><td><code>Fill</code></td><td>Probabilidad de ejecución.</td><td>Si cae, aunque haya edge teórico puedes no capturarlo.</td></tr>
+            <tr><td><code>Post-coste</code></td><td>Edge tras costes, antes de fill.</td><td>Filtro intermedio.</td></tr>
+            <tr><td><code>Model YES / Mkt YES / Mkt NO</code></td><td>Probabilidad modelo vs precio mercado.</td><td>Detectar desalineación.</td></tr>
+            <tr><td><code>Liq / Spread / Fee / LiqCost</code></td><td>Condiciones microestructura.</td><td>Evitar mercados “caros de ejecutar”.</td></tr>
+          </tbody>
+        </table>
+
+        <p class="muted">
+          Nota: todos los términos clave son clicables y muestran ayuda contextual dentro de la app.
+        </p>
+      </div>
+    </section>
+
+    <section id="pantalla-paper">
+      <h2>5) Pantalla Paper Trading (simulación end-to-end)</h2>
+      <div class="box">
+        <p>
+          Esta pantalla responde la pregunta más importante:
+          <strong>¿lo que parecía bueno en teoría termina ganando en ejecución realista?</strong>
+        </p>
+
+        <h3>Resumen principal</h3>
+        <ul>
+          <li><code>Modo</code>: REAL o DEMO.</li>
+          <li><code>Simul.</code>: operaciones simuladas cerradas.</li>
+          <li><code>Exec</code>: simuladas que sí se llenaron.</li>
+          <li><code>NoFill</code>: órdenes que no se ejecutaron.</li>
+          <li><code>Fill</code>: ratio de ejecución.</li>
+          <li><code>Expected PnL</code> vs <code>Realized PnL</code>.</li>
+          <li><code>Gap ejecución</code> = Realized - Expected.</li>
+          <li><code>Guardrails</code>, <code>PnL día UTC</code>, <code>Loss streak</code>.</li>
+        </ul>
+
+        <h3>Ranking por ciudad y por estrategia</h3>
+        <ul>
+          <li><code>Sim/Exec</code>: cuántas señales llegan a ejecución.</li>
+          <li><code>Hit</code>, <code>Fill</code>, <code>Real</code>, <code>Exp</code>, <code>Gap</code>.</li>
+          <li>Sirve para detectar dónde el modelo rinde y dónde falla la ejecución.</li>
+        </ul>
+
+        <h3>Liquidaciones recientes</h3>
+        <ul>
+          <li>Muestra <code>EXEC</code> o <code>NO-FILL</code> por trade.</li>
+          <li>Incluye observado real, expected, realized y gap.</li>
+          <li>Es la auditoría táctica de corto plazo.</li>
+        </ul>
+
+        <h3>Guardrails obligatorios implementados</h3>
+        <div class="two-col">
+          <div class="box-alt">
+            <span class="badge">Límite diario</span>
+            <p>Tope de operaciones por día UTC.</p>
+          </div>
+          <div class="box-alt">
+            <span class="badge">Stake diario</span>
+            <p>Tope de riesgo agregado diario.</p>
+          </div>
+          <div class="box-alt">
+            <span class="badge">Pérdida diaria</span>
+            <p>Bloquea entradas al superar pérdida máxima diaria.</p>
+          </div>
+          <div class="box-alt">
+            <span class="badge">Pérdida por mercado</span>
+            <p>Bloquea nuevos trades en el mismo mercado perdedor.</p>
+          </div>
+          <div class="box-alt">
+            <span class="badge">Liquidez/spread</span>
+            <p>Bloqueo automático cuando ejecución es mala.</p>
+          </div>
+          <div class="box-alt">
+            <span class="badge">Kill-switch</span>
+            <p>Se activa por pérdida severa o racha de pérdidas.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="ejemplo-londres">
+      <h2>6) Ejemplo didáctico completo (Londres)</h2>
+      <div class="box">
+        <h3>Paso 1: lectura rápida en CIUDADES</h3>
+        <p>En tarjeta de Londres revisa <code>M</code>, <code>Δ</code>, <code>S</code>, <code>P</code> y chip trader.</p>
+
+        <h3>Paso 2: validación en DETALLE</h3>
+        <ol>
+          <li>Comprueba si METAR sube o baja y a qué ritmo.</li>
+          <li>Compara estación control vs PolyTEMP.</li>
+          <li>Revisa dispersión de fuentes forecast (Now/Max/Estado).</li>
+          <li>En Trader Mode elige hoy/mañana/pasado.</li>
+          <li>Prioriza oportunidades <span class="ok">VERDE</span> con <code>BET</code> y buen <code>Fill</code>.</li>
+        </ol>
+
+        <h3>Paso 3: disciplina de ejecución</h3>
+        <ul>
+          <li>Si <code>Bruto</code> alto pero <code>Exec</code> bajo, no fuerces entrada.</li>
+          <li>Si <code>Costes</code> suben o <code>Spread</code> empeora, pasa.</li>
+          <li>Si guardrails marcan bloqueo, se respeta.</li>
+        </ul>
+
+        <h3>Paso 4: auditoría en Paper Trading</h3>
+        <ul>
+          <li>Compara <code>Expected PnL</code> vs <code>Realized PnL</code>.</li>
+          <li>Si el <code>Gap</code> es sistemáticamente negativo, el problema es ejecución (no solo modelo).</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="demo-mode">
+      <h2>7) Modo DEMO (pruebas rápidas)</h2>
+      <div class="box">
+        <p>
+          El modo DEMO endurece límites de riesgo para comprobar rápidamente bloqueos y kill-switch.
+        </p>
+        <h3>Cómo activarlo</h3>
+        <ol>
+          <li>Abre <code>local.properties</code> en la raíz del proyecto.</li>
+          <li>Añade: <code>DEMO_MODE=true</code></li>
+          <li>Recompila y ejecuta la app.</li>
+        </ol>
+        <h3>Cómo volver a modo real</h3>
+        <ol>
+          <li>Cambia a <code>DEMO_MODE=false</code> (o elimina la línea).</li>
+          <li>Recompila.</li>
+        </ol>
+        <p class="warn">En DEMO no cambies dinero real basándote en esos límites.</p>
+      </div>
+    </section>
+
+    <section id="buenas-practicas">
+      <h2>8) Buenas prácticas para alguien que empieza desde cero</h2>
+      <div class="box">
+        <ol>
+          <li>Empieza en paper trading hasta tener consistencia.</li>
+          <li>No operes por intuición sin validar METAR + estación + PolyTEMP + ejecución.</li>
+          <li>Prioriza calidad sobre cantidad: menos trades, mejores trades.</li>
+          <li>Respeta siempre guardrails y kill-switch.</li>
+          <li>No “persigas” pérdidas. Si el sistema bloquea, para.</li>
+          <li>Evalúa semanalmente el gap de ejecución y ajusta.</li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="glosario">
+      <h2>9) Glosario alfabético</h2>
+      <div class="box">
+        <table>
+          <thead>
+            <tr><th>Término</th><th>Definición</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Actualizado</td><td>Hora del último refresco de datos.</td></tr>
+            <tr><td>Avg Edge</td><td>Promedio del edge estimado de los trades.</td></tr>
+            <tr><td>BET</td><td>Señal de que la oportunidad supera umbrales de ejecución/riesgo.</td></tr>
+            <tr><td>Brier</td><td>Métrica de calidad probabilística (menor es mejor).</td></tr>
+            <tr><td>Calibración local</td><td>Ajuste por ciudad, horizonte y franja horaria para probabilidad/sigma.</td></tr>
+            <tr><td>Costes</td><td>Fee + spread + impacto de liquidez.</td></tr>
+            <tr><td>DEMO_MODE</td><td>Bandera de compilación para pruebas de riesgo.</td></tr>
+            <tr><td>Δ METAR</td><td>Cambio de temperatura entre METAR actual y anterior.</td></tr>
+            <tr><td>Edge bruto</td><td>Ventaja modelo vs precio sin costes.</td></tr>
+            <tr><td>Edge ejecutable</td><td>Ventaja real tras costes y fill.</td></tr>
+            <tr><td>EXEC</td><td>Trade simulado que sí se ejecutó.</td></tr>
+            <tr><td>Expected PnL</td><td>Resultado esperado bajo simulación de ejecución.</td></tr>
+            <tr><td>Fill</td><td>Probabilidad de que la orden sea ejecutada.</td></tr>
+            <tr><td>Fill-rate</td><td>Porcentaje de simulados que se ejecutan.</td></tr>
+            <tr><td>Gap ejecución</td><td>Diferencia entre PnL realizado y esperado.</td></tr>
+            <tr><td>Guardrails</td><td>Reglas obligatorias que bloquean riesgo excesivo.</td></tr>
+            <tr><td>Hit-rate</td><td>% de aciertos en trades ejecutados.</td></tr>
+            <tr><td>Kill-switch</td><td>Bloqueo automático global de nuevas entradas.</td></tr>
+            <tr><td>Liq</td><td>Liquidez disponible del mercado.</td></tr>
+            <tr><td>Log-loss</td><td>Métrica de penalización por mala calibración probabilística.</td></tr>
+            <tr><td>M (METAR)</td><td>Temperatura actual del METAR de referencia.</td></tr>
+            <tr><td>Mkt YES / Mkt NO</td><td>Precio implícito de probabilidad del mercado.</td></tr>
+            <tr><td>NO-FILL</td><td>Trade simulado que no llegó a ejecutarse.</td></tr>
+            <tr><td>PASS</td><td>Señal de no operar.</td></tr>
+            <tr><td>Paper Trading</td><td>Simulación de entrada/salida sin dinero real.</td></tr>
+            <tr><td>PnL</td><td>Ganancia o pérdida.</td></tr>
+            <tr><td>PolyTEMP</td><td>Consenso de máximas diarias de modelos válidos.</td></tr>
+            <tr><td>Realized PnL</td><td>Resultado realmente obtenido en simulación.</td></tr>
+            <tr><td>RANGE</td><td>Tesis de intervalo de temperatura.</td></tr>
+            <tr><td>ROI</td><td>Rentabilidad sobre stake.</td></tr>
+            <tr><td>S (Station)</td><td>Temperatura de estación de control (Wunderground).</td></tr>
+            <tr><td>Semáforo</td><td>Clasificación de oportunidad: VERDE / AMARILLO / BAJO.</td></tr>
+            <tr><td>Sim/Exec</td><td>Relación entre trades simulados y ejecutados.</td></tr>
+            <tr><td>Spread</td><td>Diferencia entre mejor compra y mejor venta.</td></tr>
+            <tr><td>Stake</td><td>Coste de entrada de la posición.</td></tr>
+            <tr><td>UNDER</td><td>Tesis de máxima por debajo del umbral.</td></tr>
+            <tr><td>OVER</td><td>Tesis de máxima por encima del umbral.</td></tr>
+            <tr><td>YES/NO</td><td>Lado del contrato comprado.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <p class="footer">
+      Documento generado para el proyecto <code>meteoTrader</code>. Mantener actualizado en cada nueva versión funcional.
+    </p>
+  </div>
+</body>
+</html>

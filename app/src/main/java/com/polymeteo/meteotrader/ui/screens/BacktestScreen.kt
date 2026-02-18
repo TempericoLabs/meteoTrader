@@ -228,6 +228,13 @@ private fun SummaryCard(
             style = MaterialTheme.typography.labelSmall,
             color = MutedInk
         )
+        MetricLine(
+            label = "Modo",
+            value = if (report.demoModeActive) "DEMO" else "REAL",
+            valueColor = if (report.demoModeActive) Color(0xFFFFC857) else Color(0xFF8FC8FF),
+            topic = BacktestHelpTopic.DEMO_MODE,
+            onHelpRequested = onHelpRequested
+        )
         BacktestHelpTerms(onHelpRequested = onHelpRequested)
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -717,36 +724,42 @@ private fun BacktestHelpTerms(onHelpRequested: (BacktestHelpTopic) -> Unit) {
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            HelpPill("Demo", BacktestHelpTopic.DEMO_MODE, onHelpRequested, Modifier.weight(1f))
             HelpPill("Risk", BacktestHelpTopic.GUARDRAILS, onHelpRequested, Modifier.weight(1f))
             HelpPill("Diario", BacktestHelpTopic.DAILY_LIMITS, onHelpRequested, Modifier.weight(1f))
             HelpPill("MktLoss", BacktestHelpTopic.MARKET_LOSS, onHelpRequested, Modifier.weight(1f))
-            HelpPill("Kill", BacktestHelpTopic.KILL_SWITCH, onHelpRequested, Modifier.weight(1f))
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            HelpPill("Kill", BacktestHelpTopic.KILL_SWITCH, onHelpRequested, Modifier.weight(1f))
             HelpPill("Trades", BacktestHelpTopic.TRADES, onHelpRequested, Modifier.weight(1f))
             HelpPill("Exec", BacktestHelpTopic.EXECUTED, onHelpRequested, Modifier.weight(1f))
             HelpPill("NoFill", BacktestHelpTopic.NO_FILL, onHelpRequested, Modifier.weight(1f))
-            HelpPill("Fill%", BacktestHelpTopic.FILL_RATE, onHelpRequested, Modifier.weight(1f))
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            HelpPill("Fill%", BacktestHelpTopic.FILL_RATE, onHelpRequested, Modifier.weight(1f))
             HelpPill("ExpPnL", BacktestHelpTopic.EXPECTED_PNL, onHelpRequested, Modifier.weight(1f))
             HelpPill("RealPnL", BacktestHelpTopic.REALIZED_PNL, onHelpRequested, Modifier.weight(1f))
             HelpPill("Gap", BacktestHelpTopic.EXEC_GAP, onHelpRequested, Modifier.weight(1f))
-            HelpPill("ROI", BacktestHelpTopic.ROI, onHelpRequested, Modifier.weight(1f))
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
+            HelpPill("ROI", BacktestHelpTopic.ROI, onHelpRequested, Modifier.weight(1f))
             HelpPill("Hit", BacktestHelpTopic.HIT_RATE, onHelpRequested, Modifier.weight(1f))
             HelpPill("Brier", BacktestHelpTopic.BRIER, onHelpRequested, Modifier.weight(1f))
             HelpPill("LogLoss", BacktestHelpTopic.LOG_LOSS, onHelpRequested, Modifier.weight(1f))
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
             HelpPill("Live/Hist", BacktestHelpTopic.LIVE_HIST, onHelpRequested, Modifier.weight(1f))
         }
     }
@@ -803,6 +816,10 @@ private enum class BacktestHelpTopic(
     val title: String,
     val message: String
 ) {
+    DEMO_MODE(
+        title = "Modo demo",
+        message = "Modo demo activa límites de riesgo más estrictos para verificar rápidamente bloqueos y kill-switch sin esperar escenarios extremos reales."
+    ),
     GUARDRAILS(
         title = "Guardrails",
         message = "Guardrails son reglas obligatorias de riesgo. Si se incumple una, el paper trading bloquea la entrada."

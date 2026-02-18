@@ -53,6 +53,7 @@ data class BacktestStrategyStat(
 
 data class BacktestReport(
     val generatedAt: Instant,
+    val demoModeActive: Boolean,
     val totalTrades: Int,
     val liveTrades: Int,
     val historicalTrades: Int,
@@ -91,6 +92,7 @@ data class BacktestReport(
         fun empty(now: Instant = Instant.now()): BacktestReport {
             return BacktestReport(
                 generatedAt = now,
+                demoModeActive = false,
                 totalTrades = 0,
                 liveTrades = 0,
                 historicalTrades = 0,

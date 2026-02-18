@@ -307,7 +307,8 @@ class WeatherRepository(
                     store = BacktestStore(it),
                     wundergroundSource = wundergroundSource,
                     polymarketSource = polymarketSource,
-                    httpClient = httpClient
+                    httpClient = httpClient,
+                    demoMode = BuildConfig.DEMO_MODE
                 )
             }
 

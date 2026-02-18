@@ -48,7 +48,8 @@ class BacktestEngine(
     private val polymarketSource: PolymarketSource,
     private val httpClient: HttpClient,
     private val json: Json = Json { ignoreUnknownKeys = true },
-    private val nowProvider: () -> Instant = { Instant.now() }
+    private val nowProvider: () -> Instant = { Instant.now() },
+    private val demoMode: Boolean = false
 ) {
 
     suspend fun ingestAndSettle(cities: List<CityWeatherData>): BacktestReport {
@@ -56,6 +57,7 @@ class BacktestEngine(
         val currentDataset = store.read()
         val recordsById = currentDataset.records.associateBy { it.id }.toMutableMap()
         val warnings = mutableListOf<String>()
+        val riskConfig = activeRiskConfig()
 
         var changed = false
         var historicalImportCompletedAtEpochMs = currentDataset.historicalImportCompletedAtEpochMs
@@ -80,7 +82,7 @@ class BacktestEngine(
         var guardrailState = RiskGuardrails.buildState(
             allRecords = recordsById.values.toList(),
             day = guardrailDayUtc,
-            config = RISK_GUARDRAIL_CONFIG
+            config = riskConfig
         )
         if (guardrailState.killSwitchActive) {
             warnings += "Risk guardrails: kill-switch activo (${guardrailState.day} UTC)"
@@ -95,7 +97,7 @@ class BacktestEngine(
                 val blockReason = RiskGuardrails.evaluate(
                     record = record,
                     state = guardrailState,
-                    config = RISK_GUARDRAIL_CONFIG
+                    config = riskConfig
                 )
                 if (blockReason != null) {
                     blockedByGuardrails += 1
@@ -655,11 +657,12 @@ class BacktestEngine(
 
     private fun buildReport(records: List<BacktestRecord>, warnings: List<String>): BacktestReport {
         val now = nowProvider()
+        val riskConfig = activeRiskConfig()
         val guardrailDayUtc = now.atZone(ZoneOffset.UTC).toLocalDate()
         val guardrailState = RiskGuardrails.buildState(
             allRecords = records,
             day = guardrailDayUtc,
-            config = RISK_GUARDRAIL_CONFIG
+            config = riskConfig
         )
 
         val settled = records.filter {
@@ -775,13 +778,19 @@ class BacktestEngine(
             if (guardrailState.killSwitchActive) {
                 add("Risk guardrails: kill-switch activo (${guardrailState.day} UTC)")
             }
-            if (guardrailState.realizedPnlUnits <= -RISK_GUARDRAIL_CONFIG.maxDailyLossUnits) {
+            if (guardrailState.realizedPnlUnits <= -riskConfig.maxDailyLossUnits) {
                 add("Risk guardrails: perdida diaria maxima alcanzada (${String.format(Locale.US, "%.3f", guardrailState.realizedPnlUnits)}u)")
+            }
+            if (demoMode) {
+                add(
+                    "Modo DEMO activo: límites estrictos (trades=${riskConfig.maxTradesPerDay}/día, stake=${String.format(Locale.US, "%.2f", riskConfig.maxStakePerDayUnits)}u/día, loss diaria=${String.format(Locale.US, "%.2f", riskConfig.maxDailyLossUnits)}u)"
+                )
             }
         }.distinct()
 
         return BacktestReport(
             generatedAt = now,
+            demoModeActive = demoMode,
             totalTrades = records.size,
             liveTrades = liveTrades,
             historicalTrades = historicalTrades,
@@ -816,6 +825,14 @@ class BacktestEngine(
             recentSettlements = recentSettlements,
             warnings = reportWarnings
         )
+    }
+
+    private fun activeRiskConfig(): RiskGuardrailConfig {
+        return if (demoMode) {
+            DEMO_RISK_GUARDRAIL_CONFIG
+        } else {
+            PROD_RISK_GUARDRAIL_CONFIG
+        }
     }
 
     private fun didHit(record: BacktestRecord): Boolean {
@@ -937,7 +954,7 @@ class BacktestEngine(
         private const val MAX_HISTORICAL_IMPORT_RECORDS = 220
         private const val PRICE_WINDOW_SECONDS = 5 * 60 * 60L
         private val VALID_TEMP_RANGE_C = -80.0..65.0
-        private val RISK_GUARDRAIL_CONFIG = RiskGuardrailConfig(
+        private val PROD_RISK_GUARDRAIL_CONFIG = RiskGuardrailConfig(
             maxTradesPerDay = 24,
             maxStakePerDayUnits = 10.0,
             maxDailyLossUnits = 2.25,
@@ -945,6 +962,15 @@ class BacktestEngine(
             minLiquidity = 900.0,
             maxSpread = 0.045,
             maxConsecutiveLosses = 4
+        )
+        private val DEMO_RISK_GUARDRAIL_CONFIG = RiskGuardrailConfig(
+            maxTradesPerDay = 3,
+            maxStakePerDayUnits = 1.2,
+            maxDailyLossUnits = 0.55,
+            maxLossPerMarketUnits = 0.28,
+            minLiquidity = 2200.0,
+            maxSpread = 0.022,
+            maxConsecutiveLosses = 2
         )
     }
 }
