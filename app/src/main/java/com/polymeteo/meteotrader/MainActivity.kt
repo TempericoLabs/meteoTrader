@@ -6,17 +6,24 @@ import androidx.activity.compose.setContent
 import com.polymeteo.meteotrader.data.WeatherRepository
 import com.polymeteo.meteotrader.ui.MeteoTraderApp
 import com.polymeteo.meteotrader.ui.MeteoViewModelFactory
+import com.polymeteo.meteotrader.ui.PreferencesStore
 import com.polymeteo.meteotrader.ui.theme.MeteoTraderTheme
 
 class MainActivity : ComponentActivity() {
 
     private val repository: WeatherRepository by lazy { WeatherRepository.createDefault(applicationContext) }
+    private val preferencesStore: PreferencesStore by lazy { PreferencesStore(applicationContext) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MeteoTraderTheme {
-                MeteoTraderApp(viewModelFactory = MeteoViewModelFactory(repository))
+                MeteoTraderApp(
+                    viewModelFactory = MeteoViewModelFactory(
+                        repository = repository,
+                        preferencesStore = preferencesStore
+                    )
+                )
             }
         }
     }

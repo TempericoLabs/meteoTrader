@@ -15,6 +15,16 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.time.Instant
 
+enum class AppMode {
+    EXPERT,
+    ROOKIE
+}
+
+enum class StrategyMode {
+    CONSERVADORA,
+    AGRESIVA
+}
+
 data class MeteoUiState(
     val isLoading: Boolean = true,
     val isRefreshing: Boolean = false,
@@ -26,14 +36,23 @@ data class MeteoUiState(
     val backtestReport: BacktestReport = BacktestReport.empty(),
     val premiumReportsByCity: Map<String, PolyTempPremiumReport> = emptyMap(),
     val premiumRefreshingCityIds: Set<String> = emptySet(),
-    val premiumErrorsByCity: Map<String, String> = emptyMap()
+    val premiumErrorsByCity: Map<String, String> = emptyMap(),
+    val appMode: AppMode = AppMode.EXPERT,
+    val strategyMode: StrategyMode = StrategyMode.CONSERVADORA
 )
 
 class MeteoViewModel(
-    private val repository: WeatherRepository
+    private val repository: WeatherRepository,
+    private val preferencesStore: PreferencesStore
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(MeteoUiState())
+    private val initialPreferences = preferencesStore.load()
+    private val _uiState = MutableStateFlow(
+        MeteoUiState(
+            appMode = initialPreferences.appMode,
+            strategyMode = initialPreferences.strategyMode
+        )
+    )
     val uiState: StateFlow<MeteoUiState> = _uiState.asStateFlow()
     private var refreshJob: Job? = null
     private var backtestJob: Job? = null
@@ -210,15 +229,28 @@ class MeteoViewModel(
             premiumJobs.remove(cityId)
         }
     }
+
+    fun setAppMode(mode: AppMode) {
+        if (_uiState.value.appMode == mode) return
+        _uiState.value = _uiState.value.copy(appMode = mode)
+        preferencesStore.saveAppMode(mode)
+    }
+
+    fun setStrategyMode(mode: StrategyMode) {
+        if (_uiState.value.strategyMode == mode) return
+        _uiState.value = _uiState.value.copy(strategyMode = mode)
+        preferencesStore.saveStrategyMode(mode)
+    }
 }
 
 class MeteoViewModelFactory(
-    private val repository: WeatherRepository
+    private val repository: WeatherRepository,
+    private val preferencesStore: PreferencesStore
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(MeteoViewModel::class.java)) {
-            return MeteoViewModel(repository) as T
+            return MeteoViewModel(repository, preferencesStore) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }

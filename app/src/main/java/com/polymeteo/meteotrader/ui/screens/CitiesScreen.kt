@@ -22,12 +22,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
@@ -45,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -54,7 +58,9 @@ import com.polymeteo.meteotrader.data.model.SourceStatus
 import com.polymeteo.meteotrader.data.model.TempUnit
 import com.polymeteo.meteotrader.data.model.TraderOpportunity
 import com.polymeteo.meteotrader.data.model.TraderSignalLevel
+import com.polymeteo.meteotrader.ui.AppMode
 import com.polymeteo.meteotrader.ui.MeteoUiState
+import com.polymeteo.meteotrader.ui.StrategyMode
 import com.polymeteo.meteotrader.ui.theme.DarkBase
 import com.polymeteo.meteotrader.ui.theme.DarkPanel
 import com.polymeteo.meteotrader.ui.theme.MutedInk
@@ -70,6 +76,10 @@ import com.polymeteo.meteotrader.util.metarCurrentInUnit
 import com.polymeteo.meteotrader.util.metarDeltaInUnit
 import com.polymeteo.meteotrader.util.polyTempInUnit
 import kotlinx.coroutines.delay
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -79,6 +89,7 @@ fun CitiesScreen(
     state: MeteoUiState,
     onRefresh: () -> Unit,
     onBacktestSelected: () -> Unit,
+    onSettingsSelected: () -> Unit,
     onCitySelected: (String) -> Unit
 ) {
     var flashToken by rememberSaveable { mutableStateOf("") }
@@ -129,6 +140,8 @@ fun CitiesScreen(
             updatedText = state.lastUpdatedAt?.formatInZone("UTC", "HH:mm:ss 'UTC'") ?: "sin actualización",
             onRefresh = onRefresh,
             onBacktestSelected = onBacktestSelected,
+            onSettingsSelected = onSettingsSelected,
+            appMode = state.appMode,
             isBacktestRefreshing = state.isBacktestRefreshing
         )
 
@@ -143,12 +156,16 @@ fun CitiesScreen(
             )
         }
 
-        TopEdgesTicker(
-            cities = state.cities,
-            edges = topEdges,
-            flashOpportunity = flashCandidate,
-            flashActive = flashActive
-        )
+        if (state.appMode == AppMode.EXPERT) {
+            TopEdgesTicker(
+                cities = state.cities,
+                edges = topEdges,
+                flashOpportunity = flashCandidate,
+                flashActive = flashActive
+            )
+        } else {
+            RookieHeader(strategyMode = state.strategyMode)
+        }
 
         PullToRefreshBox(
             isRefreshing = state.isRefreshing,
@@ -173,10 +190,17 @@ fun CitiesScreen(
                 }
 
                 else -> {
-                    CitiesGrid(
-                        cities = state.cities,
-                        onCitySelected = onCitySelected
-                    )
+                    if (state.appMode == AppMode.EXPERT) {
+                        CitiesGrid(
+                            cities = state.cities,
+                            onCitySelected = onCitySelected
+                        )
+                    } else {
+                        RookieOpportunitiesList(
+                            cities = state.cities,
+                            strategyMode = state.strategyMode
+                        )
+                    }
                 }
             }
         }
@@ -188,6 +212,8 @@ private fun HeaderBar(
     updatedText: String,
     onRefresh: () -> Unit,
     onBacktestSelected: () -> Unit,
+    onSettingsSelected: () -> Unit,
+    appMode: AppMode,
     isBacktestRefreshing: Boolean
 ) {
     Row(
@@ -216,11 +242,13 @@ private fun HeaderBar(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            FilledIconButton(onClick = onBacktestSelected) {
-                androidx.compose.material3.Icon(
-                    imageVector = Icons.Default.QueryStats,
-                    contentDescription = "Backtesting"
-                )
+            if (appMode == AppMode.EXPERT) {
+                FilledIconButton(onClick = onBacktestSelected) {
+                    androidx.compose.material3.Icon(
+                        imageVector = Icons.Default.QueryStats,
+                        contentDescription = "Backtesting"
+                    )
+                }
             }
             FilledIconButton(onClick = onRefresh) {
                 androidx.compose.material3.Icon(
@@ -228,10 +256,16 @@ private fun HeaderBar(
                     contentDescription = "Refrescar"
                 )
             }
+            FilledIconButton(onClick = onSettingsSelected) {
+                androidx.compose.material3.Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "Ajustes"
+                )
+            }
         }
     }
 
-    if (isBacktestRefreshing) {
+    if (appMode == AppMode.EXPERT && isBacktestRefreshing) {
         Text(
             text = "Backtesting actualizando...",
             style = MaterialTheme.typography.labelSmall,
@@ -241,6 +275,24 @@ private fun HeaderBar(
                 .padding(horizontal = 12.dp)
         )
     }
+}
+
+@Composable
+private fun RookieHeader(
+    strategyMode: StrategyMode
+) {
+    val strategyName = when (strategyMode) {
+        StrategyMode.CONSERVADORA -> "Conservadora"
+        StrategyMode.AGRESIVA -> "Agresiva"
+    }
+    Text(
+        text = "Modo Rookie • Estrategia $strategyName",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MutedInk,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+    )
 }
 
 @Composable
@@ -274,6 +326,222 @@ private fun CitiesGrid(
             }
         }
     }
+}
+
+@Composable
+private fun RookieOpportunitiesList(
+    cities: List<CityWeatherData>,
+    strategyMode: StrategyMode
+) {
+    val uriHandler = LocalUriHandler.current
+    val opportunities = remember(cities, strategyMode) {
+        buildRookieOpportunities(cities, strategyMode)
+    }
+
+    if (opportunities.isEmpty()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "Ahora mismo no veo una entrada clara para esta estrategia. Mejor esperar que forzar una apuesta.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MutedInk,
+                textAlign = TextAlign.Center
+            )
+        }
+        return
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        lazyItems(
+            items = opportunities,
+            key = { "${it.cityId}-${it.opportunity.marketId}" }
+        ) { candidate ->
+            RookieOpportunityCard(
+                candidate = candidate,
+                onOpenMarket = { url ->
+                    runCatching { uriHandler.openUri(url) }
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun RookieOpportunityCard(
+    candidate: RookieOpportunityCandidate,
+    onOpenMarket: (String) -> Unit
+) {
+    val signalColor = when (candidate.opportunity.signal) {
+        TraderSignalLevel.GREEN -> Positive
+        TraderSignalLevel.YELLOW -> Color(0xFFFFC857)
+        TraderSignalLevel.RED -> Neutral
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(DarkPanel)
+            .border(1.dp, signalColor.copy(alpha = 0.55f))
+            .clickable { onOpenMarket(candidate.marketUrl) }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            text = candidate.actionLabel,
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+            color = signalColor
+        )
+        Text(
+            text = "${candidate.cityName} • ${candidate.dayLabel}",
+            style = MaterialTheme.typography.labelMedium,
+            color = MutedInk
+        )
+        Text(
+            text = candidate.opportunity.question,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = "Recomendación simple: comprar ${if (candidate.opportunity.recommendedBuy == "YES") "Sí" else "No"}",
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = candidate.clarityLabel,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MutedInk
+        )
+        Text(
+            text = "Abrir este mercado en Polymarket",
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+            color = Positive
+        )
+    }
+}
+
+private data class RookieOpportunityCandidate(
+    val cityId: String,
+    val cityName: String,
+    val dayLabel: String,
+    val marketUrl: String,
+    val actionLabel: String,
+    val clarityLabel: String,
+    val opportunity: TraderOpportunity
+)
+
+private fun buildRookieOpportunities(
+    cities: List<CityWeatherData>,
+    strategyMode: StrategyMode
+): List<RookieOpportunityCandidate> {
+    return cities
+        .flatMap { city ->
+            city.polymarket.opportunities.mapNotNull { opportunity ->
+                if (!passesRookieStrategy(opportunity, strategyMode)) return@mapNotNull null
+                RookieOpportunityCandidate(
+                    cityId = city.city.id,
+                    cityName = city.city.name,
+                    dayLabel = rookieDayLabel(city, opportunity.condition.targetDate),
+                    marketUrl = buildPolymarketEventUrl(city, opportunity.condition.targetDate),
+                    actionLabel = rookieActionLabel(opportunity),
+                    clarityLabel = rookieClarityLabel(opportunity),
+                    opportunity = opportunity
+                )
+            }
+        }
+        .sortedByDescending { it.opportunity.executableEdge }
+        .take(30)
+}
+
+private fun passesRookieStrategy(
+    opportunity: TraderOpportunity,
+    strategyMode: StrategyMode
+): Boolean {
+    val liquidity = opportunity.liquidity ?: 0.0
+    val spread = opportunity.spread ?: 0.02
+    return when (strategyMode) {
+        StrategyMode.CONSERVADORA -> {
+            opportunity.shouldTrade &&
+                opportunity.signal == TraderSignalLevel.GREEN &&
+                opportunity.executableEdge >= 0.06 &&
+                opportunity.fillProbability >= 0.70 &&
+                liquidity >= 1_200.0 &&
+                spread <= 0.08 &&
+                opportunity.totalCost <= 0.18
+        }
+
+        StrategyMode.AGRESIVA -> {
+            opportunity.shouldTrade &&
+                opportunity.signal != TraderSignalLevel.RED &&
+                opportunity.executableEdge >= 0.02 &&
+                opportunity.fillProbability >= 0.45 &&
+                liquidity >= 250.0
+        }
+    }
+}
+
+private fun rookieActionLabel(opportunity: TraderOpportunity): String {
+    if (!opportunity.shouldTrade) return "Esta ni de coña"
+    return when {
+        opportunity.signal == TraderSignalLevel.GREEN && opportunity.executableEdge >= 0.12 -> "¡Apuesta ahora!"
+        opportunity.signal == TraderSignalLevel.GREEN -> "¿A qué esperas?"
+        opportunity.signal == TraderSignalLevel.YELLOW -> "Interesante, pero con calma"
+        else -> "Esta ni de coña"
+    }
+}
+
+private fun rookieClarityLabel(opportunity: TraderOpportunity): String {
+    return when {
+        opportunity.signal == TraderSignalLevel.GREEN && opportunity.fillProbability >= 0.75 ->
+            "Lectura clara y buena ejecución esperada."
+
+        opportunity.signal == TraderSignalLevel.GREEN ->
+            "Buena opción para entrar según el modelo."
+
+        opportunity.signal == TraderSignalLevel.YELLOW ->
+            "Puede funcionar, pero la entrada es más delicada."
+
+        else -> "No cumple calidad mínima para novatos."
+    }
+}
+
+private fun rookieDayLabel(
+    cityData: CityWeatherData,
+    targetDate: LocalDate?
+): String {
+    val zoneId = ZoneId.of(cityData.city.zoneId)
+    val today = LocalDate.now(zoneId)
+    val date = targetDate ?: today
+    return when (date) {
+        today -> "Hoy"
+        today.plusDays(1) -> "Mañana"
+        today.plusDays(2) -> "Pasado mañana"
+        else -> date.format(DateTimeFormatter.ofPattern("dd-MM-yyyy", Locale.US))
+    }
+}
+
+private fun buildPolymarketEventUrl(
+    cityData: CityWeatherData,
+    targetDate: LocalDate?
+): String {
+    val zoneId = ZoneId.of(cityData.city.zoneId)
+    val date = targetDate ?: LocalDate.now(zoneId)
+    val citySlug = when (cityData.city.id) {
+        "new-york" -> "nyc"
+        else -> cityData.city.id
+    }
+    val monthSlug = date
+        .format(DateTimeFormatter.ofPattern("MMMM", Locale.ENGLISH))
+        .lowercase(Locale.US)
+    return "https://polymarket.com/es/event/highest-temperature-in-$citySlug-on-$monthSlug-${date.dayOfMonth}-${date.year}"
 }
 
 @Composable

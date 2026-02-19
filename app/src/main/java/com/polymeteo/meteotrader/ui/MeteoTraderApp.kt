@@ -13,10 +13,12 @@ import com.polymeteo.meteotrader.ui.screens.BacktestScreen
 import com.polymeteo.meteotrader.ui.screens.CitiesScreen
 import com.polymeteo.meteotrader.ui.screens.CityDetailScreen
 import com.polymeteo.meteotrader.ui.screens.PolyTempPremiumScreen
+import com.polymeteo.meteotrader.ui.screens.SettingsScreen
 
 private object Routes {
     const val Cities = "cities"
     const val Backtest = "backtest"
+    const val Settings = "settings"
     const val Detail = "detail/{cityId}"
     const val DetailBase = "detail"
     const val Premium = "premium/{cityId}"
@@ -40,9 +42,20 @@ fun MeteoTraderApp(
                 state = uiState,
                 onRefresh = { viewModel.refresh() },
                 onBacktestSelected = { navController.navigate(Routes.Backtest) },
+                onSettingsSelected = { navController.navigate(Routes.Settings) },
                 onCitySelected = { cityId ->
                     navController.navigate("${Routes.DetailBase}/$cityId")
                 }
+            )
+        }
+
+        composable(Routes.Settings) {
+            SettingsScreen(
+                appMode = uiState.appMode,
+                strategyMode = uiState.strategyMode,
+                onBack = { navController.popBackStack() },
+                onAppModeChanged = { viewModel.setAppMode(it) },
+                onStrategyModeChanged = { viewModel.setStrategyMode(it) }
             )
         }
 
