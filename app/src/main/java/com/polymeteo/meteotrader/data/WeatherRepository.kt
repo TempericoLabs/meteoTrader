@@ -8,7 +8,6 @@ import com.polymeteo.meteotrader.data.forecast.ForecastProvider
 import com.polymeteo.meteotrader.data.forecast.ForecastWeights
 import com.polymeteo.meteotrader.data.forecast.OpenMeteoProvider
 import com.polymeteo.meteotrader.data.forecast.OpenWeatherProvider
-import com.polymeteo.meteotrader.data.forecast.PlaceholderEcmwfProvider
 import com.polymeteo.meteotrader.data.forecast.WeatherGovProvider
 import com.polymeteo.meteotrader.data.forecast.WindyProvider
 import com.polymeteo.meteotrader.data.model.BacktestReport
@@ -425,8 +424,7 @@ class WeatherRepository(
                     name = "Open-Meteo ECMWF AIFS"
                 ),
                 OpenWeatherProvider(httpClient, BuildConfig.OPEN_WEATHER_API_KEY),
-                WeatherGovProvider(httpClient),
-                PlaceholderEcmwfProvider()
+                WeatherGovProvider(httpClient)
             )
 
             return WeatherRepository(

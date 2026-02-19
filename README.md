@@ -38,9 +38,7 @@ App Android (Jetpack Compose) para mercados de temperatura máxima diaria en Pol
   - Windy (ECMWF/GFS/ICON)
   - Open-Meteo (ECMWF IFS + AIFS)
   - OpenWeather
-  - Weatherstack
   - NOAA Weather.gov (solo ciudades de EE.UU.)
-  - ECMWF Web API marcado como `SKIPPED` (placeholder para integración batch).
 - Trader markets:
   - Polymarket Gamma API (`/markets`) con filtro dinámico por ciudad de mercados de máxima diaria.
   - Resolución principal por `slug` de evento (`/events?slug=highest-temperature-in-{city}-on-{month}-{day}-{year}`) para hoy, mañana y pasado mañana.

@@ -447,19 +447,6 @@ class WindyProvider(
     }
 }
 
-class PlaceholderEcmwfProvider : ForecastProvider {
-    override val id: String = "ecmwf-webapi"
-    override val name: String = "ECMWF Web API"
-
-    override suspend fun fetch(city: CityConfig, targetDate: LocalDate): ForecastSourceResult {
-        return errorResult(
-            provider = this,
-            message = "Requiere pipeline batch (MARS/WebAPI) y bridge HTTP para móvil",
-            status = SourceStatus.SKIPPED
-        )
-    }
-}
-
 private fun String.toLocalDateOrNull(): LocalDate? {
     return try {
         LocalDate.parse(this)

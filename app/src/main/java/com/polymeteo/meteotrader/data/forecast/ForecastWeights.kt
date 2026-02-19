@@ -15,8 +15,7 @@ object ForecastWeights {
         "windy-nam-conus" to 1.12,
         "weather-gov" to 1.10,
         "windy-gfs" to 1.05,
-        "openweather" to 0.85,
-        "ecmwf-webapi" to 1.20
+        "openweather" to 0.85
     )
 
     fun baseWeightFor(sourceId: String): Double {
