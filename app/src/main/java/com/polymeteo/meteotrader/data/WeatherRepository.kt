@@ -5,6 +5,7 @@ import com.polymeteo.meteotrader.BuildConfig
 import com.polymeteo.meteotrader.data.backtest.BacktestEngine
 import com.polymeteo.meteotrader.data.backtest.BacktestStore
 import com.polymeteo.meteotrader.data.forecast.ForecastProvider
+import com.polymeteo.meteotrader.data.forecast.ForecastWeights
 import com.polymeteo.meteotrader.data.forecast.OpenMeteoProvider
 import com.polymeteo.meteotrader.data.forecast.OpenWeatherProvider
 import com.polymeteo.meteotrader.data.forecast.PlaceholderEcmwfProvider
@@ -17,8 +18,12 @@ import com.polymeteo.meteotrader.data.model.CityWeatherData
 import com.polymeteo.meteotrader.data.model.ControlStationSnapshot
 import com.polymeteo.meteotrader.data.model.ForecastSourceResult
 import com.polymeteo.meteotrader.data.model.MetarSnapshot
+import com.polymeteo.meteotrader.data.model.PolyTempPremiumReport
 import com.polymeteo.meteotrader.data.model.PolymarketSnapshot
 import com.polymeteo.meteotrader.data.model.SourceStatus
+import com.polymeteo.meteotrader.data.premium.PolyTempPremiumEngine
+import com.polymeteo.meteotrader.data.premium.PolyTempPremiumStore
+import com.polymeteo.meteotrader.data.premium.PremiumWeightSnapshot
 import com.polymeteo.meteotrader.data.source.HttpClient
 import com.polymeteo.meteotrader.data.source.MetarSource
 import com.polymeteo.meteotrader.data.source.PolymarketSource
@@ -43,7 +48,8 @@ class WeatherRepository(
     private val wundergroundSource: WundergroundSource,
     private val forecastProviders: List<ForecastProvider>,
     private val polymarketSource: PolymarketSource,
-    private val backtestEngine: BacktestEngine? = null
+    private val backtestEngine: BacktestEngine? = null,
+    private val premiumEngine: PolyTempPremiumEngine? = null
 ) {
 
     suspend fun fetchAllCities(): List<CityWeatherData> = coroutineScope {
@@ -72,6 +78,24 @@ class WeatherRepository(
         return engine.computeReport()
     }
 
+    suspend fun refreshPremiumReport(cityId: String): PolyTempPremiumReport? {
+        val city = CityCatalog.findById(cityId) ?: return null
+        val engine = premiumEngine ?: return PolyTempPremiumReport.empty(
+            cityId = city.id,
+            cityName = city.name
+        )
+        return engine.refreshCityReport(city)
+    }
+
+    suspend fun loadPremiumReport(cityId: String): PolyTempPremiumReport? {
+        val city = CityCatalog.findById(cityId) ?: return null
+        val engine = premiumEngine ?: return PolyTempPremiumReport.empty(
+            cityId = city.id,
+            cityName = city.name
+        )
+        return engine.loadCityReport(city)
+    }
+
     suspend fun fetchCity(city: CityConfig): CityWeatherData = coroutineScope {
         val zoneId = ZoneId.of(city.zoneId)
         val targetDate = LocalDate.now(zoneId)
@@ -86,7 +110,15 @@ class WeatherRepository(
         val control = controlDeferred.await()
         val forecasts = forecastsDeferred.awaitAll()
 
-        val polyTempComputation = computePolyTemp(forecasts)
+        val premiumWeights = fetchPremiumWeightsWithTimeout(
+            city = city,
+            targetDate = targetDate,
+            forecasts = forecasts
+        )
+        val polyTempComputation = computePolyTemp(
+            forecasts = forecasts,
+            dynamicWeights = premiumWeights.weightsByProviderId
+        )
         val polymarket = fetchPolymarketWithTimeout(
             city = city,
             polyTempC = polyTempComputation.polyTempC,
@@ -101,6 +133,7 @@ class WeatherRepository(
                 result.error?.let { add("${result.sourceName}: $it") }
             }
             addAll(polyTempComputation.warnings)
+            addAll(premiumWeights.warnings)
         }
 
         CityWeatherData(
@@ -185,7 +218,35 @@ class WeatherRepository(
         )
     }
 
-    private fun computePolyTemp(forecasts: List<ForecastSourceResult>): PolyTempComputation {
+    private suspend fun fetchPremiumWeightsWithTimeout(
+        city: CityConfig,
+        targetDate: LocalDate,
+        forecasts: List<ForecastSourceResult>
+    ): PremiumWeightSnapshot {
+        val engine = premiumEngine ?: return PremiumWeightSnapshot(
+            weightsByProviderId = emptyMap(),
+            verifiedDays = 0,
+            lastVerifiedDate = null,
+            warnings = emptyList()
+        )
+        return withTimeoutOrNull(PREMIUM_TIMEOUT_MS) {
+            engine.ingestAndResolveWeights(
+                city = city,
+                targetDate = targetDate,
+                forecasts = forecasts
+            )
+        } ?: PremiumWeightSnapshot(
+            weightsByProviderId = emptyMap(),
+            verifiedDays = 0,
+            lastVerifiedDate = null,
+            warnings = listOf("PolyTEMP PREMIUM: timeout del motor de verificación")
+        )
+    }
+
+    private fun computePolyTemp(
+        forecasts: List<ForecastSourceResult>,
+        dynamicWeights: Map<String, Double>
+    ): PolyTempComputation {
         val candidates = forecasts
             .asSequence()
             .filter { it.status == SourceStatus.SUCCESS }
@@ -215,7 +276,7 @@ class WeatherRepository(
             candidates.filter { abs(it.valueC - median) <= outlierTolerance }
         }.ifEmpty { candidates }
 
-        val weighted = filtered.weightedAverage()
+        val weighted = filtered.weightedAverage(dynamicWeights)
         val spread = filtered.maxOf { it.valueC } - filtered.minOf { it.valueC }
         val warnings = buildList {
             val outliers = candidates.size - filtered.size
@@ -237,11 +298,12 @@ class WeatherRepository(
         )
     }
 
-    private fun List<SourceTemp>.weightedAverage(): Double {
+    private fun List<SourceTemp>.weightedAverage(dynamicWeights: Map<String, Double>): Double {
         var weightedSum = 0.0
         var totalWeight = 0.0
         forEach { sample ->
-            val weight = SOURCE_WEIGHTS[sample.sourceId] ?: DEFAULT_SOURCE_WEIGHT
+            val weight = dynamicWeights[sample.sourceId]
+                ?: ForecastWeights.baseWeightFor(sample.sourceId)
             weightedSum += sample.valueC * weight
             totalWeight += weight
         }
@@ -281,21 +343,9 @@ class WeatherRepository(
         private const val CONTROL_TIMEOUT_MS = 8_000L
         private const val FORECAST_TIMEOUT_MS = 9_000L
         private const val POLYMARKET_TIMEOUT_MS = 6_000L
+        private const val PREMIUM_TIMEOUT_MS = 5_000L
         private const val MIN_FORECASTS_FOR_HIGH_CONFIDENCE = 3
         private val VALID_TEMP_RANGE_C = -80.0..65.0
-        private const val DEFAULT_SOURCE_WEIGHT = 0.9
-
-        private val SOURCE_WEIGHTS = mapOf(
-            "windy-ecmwf" to 1.35,
-            "openmeteo-ifs" to 1.30,
-            "openmeteo-aifs" to 1.25,
-            "windy-icon" to 1.15,
-            "weather-gov" to 1.10,
-            "windy-gfs" to 1.05,
-            "openweather" to 0.85,
-            "weatherstack" to 0.75,
-            "ecmwf-webapi" to 1.20
-        )
 
         fun createDefault(context: Context? = null): WeatherRepository {
             val httpClient = HttpClient()
@@ -311,15 +361,14 @@ class WeatherRepository(
                     demoMode = BuildConfig.DEMO_MODE
                 )
             }
+            val premiumEngine = context?.let {
+                PolyTempPremiumEngine(
+                    store = PolyTempPremiumStore(it),
+                    wundergroundSource = wundergroundSource
+                )
+            }
 
             val providers: List<ForecastProvider> = listOf(
-                WindyProvider(
-                    httpClient = httpClient,
-                    apiKey = BuildConfig.WINDY_API_KEY,
-                    model = "ecmwf",
-                    id = "windy-ecmwf",
-                    name = "Windy ECMWF IFS"
-                ),
                 WindyProvider(
                     httpClient = httpClient,
                     apiKey = BuildConfig.WINDY_API_KEY,
@@ -330,15 +379,28 @@ class WeatherRepository(
                 WindyProvider(
                     httpClient = httpClient,
                     apiKey = BuildConfig.WINDY_API_KEY,
-                    model = "icon",
-                    id = "windy-icon",
-                    name = "Windy ICON"
+                    model = "iconEu",
+                    id = "windy-icon-eu",
+                    name = "Windy ICON-EU"
+                ),
+                WindyProvider(
+                    httpClient = httpClient,
+                    apiKey = BuildConfig.WINDY_API_KEY,
+                    model = "namConus",
+                    id = "windy-nam-conus",
+                    name = "Windy NAM CONUS"
                 ),
                 OpenMeteoProvider(
                     httpClient = httpClient,
                     model = "ecmwf_ifs",
                     id = "openmeteo-ifs",
                     name = "Open-Meteo ECMWF IFS"
+                ),
+                OpenMeteoProvider(
+                    httpClient = httpClient,
+                    model = "ecmwf_ifs025",
+                    id = "openmeteo-ifs025",
+                    name = "Open-Meteo ECMWF IFS 0.25"
                 ),
                 OpenMeteoProvider(
                     httpClient = httpClient,
@@ -357,7 +419,8 @@ class WeatherRepository(
                 wundergroundSource = wundergroundSource,
                 forecastProviders = providers,
                 polymarketSource = polymarketSource,
-                backtestEngine = backtestEngine
+                backtestEngine = backtestEngine,
+                premiumEngine = premiumEngine
             )
         }
     }

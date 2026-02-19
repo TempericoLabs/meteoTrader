@@ -77,7 +77,8 @@ fun CityDetailScreen(
     cityData: CityWeatherData?,
     globalError: String?,
     onBack: () -> Unit,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    onOpenPolyTempPremium: () -> Unit
 ) {
     LaunchedEffect(cityData?.city?.id) {
         if (cityData == null) onRefresh()
@@ -199,6 +200,7 @@ fun CityDetailScreen(
                             valueColor = Positive,
                             valueFontWeight = FontWeight.Bold
                         )
+                        PolyTempPremiumLink(onClick = onOpenPolyTempPremium)
                         SourceLinkRow(
                             label = "Fuente METAR",
                             url = cityData.metar.sourceUrl,
@@ -362,6 +364,32 @@ private fun DetailPair(
             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = valueFontWeight),
             color = valueColor,
             modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
+private fun PolyTempPremiumLink(onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "PolyTemp PREMIUM",
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = Color(0xFF8FC8FF),
+            textDecoration = TextDecoration.Underline,
+            modifier = Modifier.clickable { onClick() }
+        )
+        Text(
+            text = "Verificación",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFF8FC8FF),
+            textDecoration = TextDecoration.Underline,
+            modifier = Modifier.clickable { onClick() }
         )
     }
 }

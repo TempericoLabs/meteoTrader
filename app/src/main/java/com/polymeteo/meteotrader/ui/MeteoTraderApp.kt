@@ -12,12 +12,15 @@ import androidx.navigation.navArgument
 import com.polymeteo.meteotrader.ui.screens.BacktestScreen
 import com.polymeteo.meteotrader.ui.screens.CitiesScreen
 import com.polymeteo.meteotrader.ui.screens.CityDetailScreen
+import com.polymeteo.meteotrader.ui.screens.PolyTempPremiumScreen
 
 private object Routes {
     const val Cities = "cities"
     const val Backtest = "backtest"
     const val Detail = "detail/{cityId}"
     const val DetailBase = "detail"
+    const val Premium = "premium/{cityId}"
+    const val PremiumBase = "premium"
 }
 
 @Composable
@@ -60,7 +63,25 @@ fun MeteoTraderApp(
                 cityData = uiState.cities.firstOrNull { it.city.id == cityId },
                 globalError = uiState.errorMessage,
                 onBack = { navController.popBackStack() },
-                onRefresh = { viewModel.refreshCity(cityId) }
+                onRefresh = { viewModel.refreshCity(cityId) },
+                onOpenPolyTempPremium = {
+                    navController.navigate("${Routes.PremiumBase}/$cityId")
+                }
+            )
+        }
+
+        composable(
+            route = Routes.Premium,
+            arguments = listOf(navArgument("cityId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val cityId = backStackEntry.arguments?.getString("cityId").orEmpty()
+            PolyTempPremiumScreen(
+                cityData = uiState.cities.firstOrNull { it.city.id == cityId },
+                report = uiState.premiumReportsByCity[cityId],
+                isRefreshing = uiState.premiumRefreshingCityIds.contains(cityId),
+                errorMessage = uiState.premiumErrorsByCity[cityId],
+                onBack = { navController.popBackStack() },
+                onRefresh = { viewModel.refreshPremium(cityId) }
             )
         }
     }

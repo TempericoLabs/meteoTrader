@@ -20,6 +20,8 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.format.DateTimeParseException
 import java.time.ZoneId
+import java.time.temporal.ChronoUnit
+import java.net.URLEncoder
 import java.util.Locale
 
 interface ForecastProvider {
@@ -72,6 +74,34 @@ private fun errorResult(
     currentTempF = null,
     error = message
 )
+
+private fun compactApiError(
+    root: JsonObject?,
+    fallback: String
+): String {
+    val errorObj = root?.objOrNull("error")
+    val info = errorObj?.stringOrNull("info")
+    val type = errorObj?.stringOrNull("type")
+    val code = errorObj?.longOrNull("code")
+    val pieces = listOfNotNull(
+        code?.let { "code=$it" },
+        type,
+        info
+    )
+    return if (pieces.isNotEmpty()) pieces.joinToString(" | ") else fallback
+}
+
+private fun compactHttpError(
+    code: Int,
+    body: String
+): String {
+    val snippet = body
+        .replace('\n', ' ')
+        .replace('\r', ' ')
+        .trim()
+        .take(140)
+    return if (snippet.isBlank()) "HTTP $code" else "HTTP $code: $snippet"
+}
 
 class OpenMeteoProvider(
     private val httpClient: HttpClient,
@@ -187,20 +217,39 @@ class WeatherStackProvider(
             return errorResult(this, "WEATHERSTACK_API_KEY vacío", SourceStatus.SKIPPED)
         }
 
-        val query = String.format(Locale.US, "%.4f,%.4f", city.latitude, city.longitude)
-        val url = "https://api.weatherstack.com/forecast?access_key=$apiKey&query=$query&forecast_days=1&hourly=1&units=m"
+        val zoneId = ZoneId.of(city.zoneId)
+        val today = LocalDate.now(zoneId)
+        val daysAhead = ChronoUnit.DAYS.between(today, targetDate).toInt()
+        val forecastDays = (daysAhead + 1).coerceIn(1, 3)
+        val queryRaw = String.format(Locale.US, "%.4f,%.4f", city.latitude, city.longitude)
+        val query = URLEncoder.encode(queryRaw, Charsets.UTF_8.name())
+        val url = buildString {
+            append("https://api.weatherstack.com/forecast")
+            append("?access_key=$apiKey")
+            append("&query=$query")
+            append("&forecast_days=$forecastDays")
+            append("&hourly=1")
+            append("&units=m")
+        }
 
         return runCatching {
             val response = httpClient.get(url)
             if (response.code !in 200..299) {
-                return errorResult(this, "HTTP ${response.code}")
+                return errorResult(this, compactHttpError(response.code, response.body))
             }
             val root = json.parseToJsonElement(response.body) as? JsonObject
                 ?: return errorResult(this, "Payload Weatherstack inválido")
 
-            val errorInfo = root.objOrNull("error")?.stringOrNull("info")
-            if (!errorInfo.isNullOrBlank()) {
-                return errorResult(this, errorInfo)
+            val isSuccess = root["success"]?.let { (it as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() }
+            if (isSuccess == false || root.objOrNull("error") != null) {
+                val errorObj = root.objOrNull("error")
+                val code = errorObj?.longOrNull("code")
+                val errorMessage = compactApiError(root, "Error Weatherstack")
+                val status = when (code?.toInt()) {
+                    403, 609 -> SourceStatus.SKIPPED // plan sin forecast
+                    else -> SourceStatus.ERROR
+                }
+                return errorResult(this, errorMessage, status)
             }
 
             val forecast = root.objOrNull("forecast")
@@ -208,6 +257,9 @@ class WeatherStackProvider(
                 ?: (forecast?.entries?.firstOrNull()?.value as? JsonObject)
             val maxTemp = dayObject?.doubleOrNull("maxtemp") ?: dayObject?.doubleOrNull("maxtempC")
             val current = root.objOrNull("current")?.doubleOrNull("temperature")
+            if (maxTemp == null) {
+                return errorResult(this, "Weatherstack sin maxtemp para ${targetDate}", SourceStatus.ERROR)
+            }
             successResult(this, maxTemp, current)
         }.getOrElse { throwable ->
             errorResult(this, throwable.message ?: "Error Weatherstack")
@@ -312,13 +364,28 @@ class WindyProvider(
         if (apiKey.isBlank()) {
             return errorResult(this, "WINDY_API_KEY vacío", SourceStatus.SKIPPED)
         }
+        val resolvedModel = normalizeWindyModel(model)
+        if (resolvedModel == null) {
+            return errorResult(
+                this,
+                "Modelo Windy no soportado: $model (Point Forecast no expone ECMWF)",
+                SourceStatus.SKIPPED
+            )
+        }
+        if (!isModelCoverageSupported(resolvedModel, city)) {
+            return errorResult(
+                this,
+                "Modelo Windy $resolvedModel fuera de cobertura para ${city.name}",
+                SourceStatus.SKIPPED
+            )
+        }
 
         val payload = """
             {
               "lat": ${city.latitude},
               "lon": ${city.longitude},
-              "model": "$model",
-              "parameters": ["temp", "temp_surface", "temp-surface"],
+              "model": "$resolvedModel",
+              "parameters": ["temp"],
               "levels": ["surface"],
               "key": "$apiKey"
             }
@@ -326,22 +393,31 @@ class WindyProvider(
 
         return runCatching {
             val response = httpClient.postJson(
-                url = "https://api.windy.com/api/v2/forecast",
+                url = "https://api.windy.com/api/point-forecast/v2",
                 jsonBody = payload,
                 headers = mapOf("Content-Type" to "application/json")
             )
+            if (response.code == 204) {
+                return errorResult(this, "Windy sin datos para modelo/parametría", SourceStatus.SKIPPED)
+            }
             if (response.code !in 200..299) {
-                return errorResult(this, "HTTP ${response.code}")
+                return errorResult(this, compactHttpError(response.code, response.body))
             }
 
             val root = json.parseToJsonElement(response.body) as? JsonObject
                 ?: return errorResult(this, "Payload Windy inválido")
 
+            val errorText = compactApiError(root, "")
+            if (errorText.isNotBlank() && root.objOrNull("error") != null) {
+                return errorResult(this, errorText)
+            }
+
             val timestamps = (root["ts"] as? JsonArray)
                 ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.toLongOrNull() }
                 .orEmpty()
 
-            val tempsRaw = extractTemperatureSeries(root)
+            val unit = extractWindyTempUnit(root)
+            val tempsRaw = extractTemperatureSeries(root).map { normalizeWindyTempToCelsius(it, unit) }
             if (tempsRaw.isEmpty()) {
                 return errorResult(this, "Windy sin serie térmica")
             }
@@ -350,13 +426,13 @@ class WindyProvider(
             val series = if (timestamps.isNotEmpty() && timestamps.size == tempsRaw.size) {
                 timestamps.zip(tempsRaw).map { (ts, value) ->
                     val instant = if (ts > 100_000_000_000L) Instant.ofEpochMilli(ts) else Instant.ofEpochSecond(ts)
-                    instant.atZone(zoneId).toLocalDate() to normalizeWindyTempToCelsius(value)
+                    instant.atZone(zoneId).toLocalDate() to value
                 }
             } else {
                 // Fallback defensivo cuando no hay timestamps válidos.
                 val today = LocalDate.now(zoneId)
                 tempsRaw.mapIndexed { index, value ->
-                    today.plusDays((index / 8).toLong()) to normalizeWindyTempToCelsius(value)
+                    today.plusDays((index / 8).toLong()) to value
                 }
             }
 
@@ -389,9 +465,52 @@ class WindyProvider(
         return emptyList()
     }
 
-    private fun normalizeWindyTempToCelsius(value: Double): Double {
-        // Windy suele devolver Kelvin en series de temperatura.
-        return if (value > 170) value - 273.15 else value
+    private fun extractWindyTempUnit(root: JsonObject): String? {
+        val units = root.objOrNull("units") ?: return null
+        return units.stringOrNull("temp-surface")
+            ?: units.stringOrNull("temp_surface")
+            ?: units.stringOrNull("temp")
+            ?: units.entries.firstOrNull { it.key.startsWith("temp") }?.value
+                ?.let { (it as? JsonPrimitive)?.contentOrNull }
+    }
+
+    private fun normalizeWindyTempToCelsius(
+        value: Double,
+        unit: String?
+    ): Double {
+        val normalizedUnit = unit?.trim()?.lowercase()
+        return when {
+            normalizedUnit == "k" || normalizedUnit == "kelvin" -> value - 273.15
+            normalizedUnit == "c" || normalizedUnit == "°c" -> value
+            normalizedUnit == "f" || normalizedUnit == "°f" -> fahrenheitToCelsius(value)
+            // Heurística segura cuando no llega "units"
+            value > 170 -> value - 273.15
+            else -> value
+        }
+    }
+
+    private fun normalizeWindyModel(rawModel: String): String? {
+        return when (rawModel.trim().lowercase()) {
+            "gfs" -> "gfs"
+            "icon", "iconeu" -> "iconEu"
+            "arome" -> "arome"
+            "namconus", "nam_conus" -> "namConus"
+            "ecmwf" -> null
+            else -> rawModel
+        }
+    }
+
+    private fun isModelCoverageSupported(
+        windyModel: String,
+        city: CityConfig
+    ): Boolean {
+        return when (windyModel) {
+            // NAM CONUS se limita a EE. UU. continental.
+            "namConus" -> city.metarCode.startsWith("K")
+            // ICON-EU/AROME son regionales europeas; filtramos por caja geográfica aproximada.
+            "iconEu", "arome" -> city.latitude in 30.0..72.0 && city.longitude in -25.0..45.0
+            else -> true
+        }
     }
 }
 
@@ -402,7 +521,7 @@ class PlaceholderEcmwfProvider : ForecastProvider {
     override suspend fun fetch(city: CityConfig, targetDate: LocalDate): ForecastSourceResult {
         return errorResult(
             provider = this,
-            message = "Integración pendiente (Web API requiere flujo batch) ",
+            message = "Requiere pipeline batch (MARS/WebAPI) y bridge HTTP para móvil",
             status = SourceStatus.SKIPPED
         )
     }

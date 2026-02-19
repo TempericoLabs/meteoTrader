@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.polymeteo.meteotrader.data.WeatherRepository
 import com.polymeteo.meteotrader.data.model.BacktestReport
 import com.polymeteo.meteotrader.data.model.CityWeatherData
+import com.polymeteo.meteotrader.data.model.PolyTempPremiumReport
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,7 +23,10 @@ data class MeteoUiState(
     val lastUpdatedAt: Instant? = null,
     val errorMessage: String? = null,
     val backtestErrorMessage: String? = null,
-    val backtestReport: BacktestReport = BacktestReport.empty()
+    val backtestReport: BacktestReport = BacktestReport.empty(),
+    val premiumReportsByCity: Map<String, PolyTempPremiumReport> = emptyMap(),
+    val premiumRefreshingCityIds: Set<String> = emptySet(),
+    val premiumErrorsByCity: Map<String, String> = emptyMap()
 )
 
 class MeteoViewModel(
@@ -34,6 +38,7 @@ class MeteoViewModel(
     private var refreshJob: Job? = null
     private var backtestJob: Job? = null
     private val cityRefreshJobs = mutableMapOf<String, Job>()
+    private val premiumJobs = mutableMapOf<String, Job>()
 
     init {
         loadBacktestReport()
@@ -163,6 +168,47 @@ class MeteoViewModel(
 
     fun cityById(cityId: String): CityWeatherData? {
         return _uiState.value.cities.firstOrNull { it.city.id == cityId }
+    }
+
+    fun refreshPremium(cityId: String, force: Boolean = true) {
+        if (cityId.isBlank()) return
+        if (premiumJobs[cityId]?.isActive == true) return
+        if (!force && _uiState.value.premiumReportsByCity.containsKey(cityId)) return
+
+        premiumJobs[cityId] = viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(
+                premiumRefreshingCityIds = _uiState.value.premiumRefreshingCityIds + cityId,
+                premiumErrorsByCity = _uiState.value.premiumErrorsByCity - cityId
+            )
+
+            runCatching {
+                repository.refreshPremiumReport(cityId)
+            }.onSuccess { report ->
+                if (report == null) {
+                    _uiState.value = _uiState.value.copy(
+                        premiumErrorsByCity = _uiState.value.premiumErrorsByCity + (cityId to "Ciudad no encontrada")
+                    )
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        premiumReportsByCity = _uiState.value.premiumReportsByCity + (cityId to report),
+                        premiumErrorsByCity = _uiState.value.premiumErrorsByCity - cityId
+                    )
+                }
+            }.onFailure { throwable ->
+                if (throwable !is CancellationException) {
+                    _uiState.value = _uiState.value.copy(
+                        premiumErrorsByCity = _uiState.value.premiumErrorsByCity + (
+                            cityId to (throwable.message ?: "No se pudo cargar PolyTemp PREMIUM")
+                            )
+                    )
+                }
+            }
+
+            _uiState.value = _uiState.value.copy(
+                premiumRefreshingCityIds = _uiState.value.premiumRefreshingCityIds - cityId
+            )
+            premiumJobs.remove(cityId)
+        }
     }
 }
 
