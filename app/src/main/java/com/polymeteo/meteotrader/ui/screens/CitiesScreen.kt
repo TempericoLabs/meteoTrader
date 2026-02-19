@@ -1,6 +1,15 @@
 package com.polymeteo.meteotrader.ui.screens
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.MarqueeAnimationMode
+import androidx.compose.foundation.MarqueeSpacing
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -26,15 +35,24 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.polymeteo.meteotrader.data.model.CityWeatherData
+import com.polymeteo.meteotrader.data.model.SourceStatus
 import com.polymeteo.meteotrader.data.model.TempUnit
+import com.polymeteo.meteotrader.data.model.TraderOpportunity
 import com.polymeteo.meteotrader.data.model.TraderSignalLevel
 import com.polymeteo.meteotrader.ui.MeteoUiState
 import com.polymeteo.meteotrader.ui.theme.DarkBase
@@ -51,6 +69,7 @@ import com.polymeteo.meteotrader.util.formatTemperature
 import com.polymeteo.meteotrader.util.metarCurrentInUnit
 import com.polymeteo.meteotrader.util.metarDeltaInUnit
 import com.polymeteo.meteotrader.util.polyTempInUnit
+import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -62,6 +81,10 @@ fun CitiesScreen(
     onBacktestSelected: () -> Unit,
     onCitySelected: (String) -> Unit
 ) {
+    var flashToken by rememberSaveable { mutableStateOf("") }
+    var flashUntilMillis by rememberSaveable { mutableStateOf(0L) }
+    var flashActive by rememberSaveable { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -70,6 +93,37 @@ fun CitiesScreen(
         val topEdges = state.cities
             .mapNotNull { city -> city.polymarket.topOpportunity?.let { city.city.name to it } }
             .sortedByDescending { (_, opp) -> opp.executableEdge }
+        val flashCandidate = topEdges.firstOrNull { (_, opp) -> isFlashOpportunity(opp) }
+
+        LaunchedEffect(
+            flashCandidate?.second?.marketId,
+            flashCandidate?.second?.executableEdge,
+            state.lastUpdatedAt
+        ) {
+            val candidate = flashCandidate ?: return@LaunchedEffect
+            val newToken = buildString {
+                append(candidate.second.marketId)
+                append(":")
+                append(state.lastUpdatedAt?.epochSecond ?: 0L)
+            }
+            if (newToken != flashToken) {
+                flashToken = newToken
+                flashUntilMillis = System.currentTimeMillis() + FLASH_DURATION_MILLIS
+            }
+        }
+
+        LaunchedEffect(flashUntilMillis) {
+            if (flashUntilMillis <= 0L) {
+                flashActive = false
+                return@LaunchedEffect
+            }
+            flashActive = true
+            val remaining = flashUntilMillis - System.currentTimeMillis()
+            if (remaining > 0L) delay(remaining)
+            if (System.currentTimeMillis() >= flashUntilMillis) {
+                flashActive = false
+            }
+        }
 
         HeaderBar(
             updatedText = state.lastUpdatedAt?.formatInZone("UTC", "HH:mm:ss 'UTC'") ?: "sin actualización",
@@ -89,11 +143,12 @@ fun CitiesScreen(
             )
         }
 
-        if (topEdges.isNotEmpty()) {
-            TopEdgesBanner(
-                edges = topEdges.take(3)
-            )
-        }
+        TopEdgesTicker(
+            cities = state.cities,
+            edges = topEdges,
+            flashOpportunity = flashCandidate,
+            flashActive = flashActive
+        )
 
         PullToRefreshBox(
             isRefreshing = state.isRefreshing,
@@ -369,33 +424,114 @@ private fun formatCompactDelta(value: Double?, unit: TempUnit): String {
     return "$sign$absValue°${unit.symbol}"
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TopEdgesBanner(
-    edges: List<Pair<String, com.polymeteo.meteotrader.data.model.TraderOpportunity>>
+private fun TopEdgesTicker(
+    cities: List<CityWeatherData>,
+    edges: List<Pair<String, TraderOpportunity>>,
+    flashOpportunity: Pair<String, TraderOpportunity>?,
+    flashActive: Boolean
 ) {
-    Column(
+    val flashTransition = rememberInfiniteTransition(label = "flashTicker")
+    val flashAlpha by flashTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.25f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 420),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "flashAlpha"
+    )
+
+    val tickerText = remember(cities, edges, flashOpportunity, flashActive) {
+        val messages = mutableListOf<String>()
+
+        if (flashActive && flashOpportunity != null) {
+            val (city, opp) = flashOpportunity
+            messages += "FLASH $city ${directionLabel(opp.direction)} ${opp.recommendedBuy} ${formatPercent(opp.executableEdge)}"
+        }
+
+        if (edges.isEmpty()) {
+            messages += "Sin oportunidades ejecutables por ahora"
+        } else {
+            val executableCount = edges.count { (_, opp) -> opp.shouldTrade }
+            messages += "Ejecutables $executableCount/${edges.size}"
+
+            edges.take(4).forEachIndexed { index, (city, opp) ->
+                messages += "${index + 1} $city ${directionLabel(opp.direction)} ${if (opp.shouldTrade) "BET" else "PASS"} ${opp.recommendedBuy} ${formatPercent(opp.executableEdge)}"
+            }
+        }
+
+        val warningCities = cities
+            .filter { city ->
+                city.warnings.any { warning ->
+                    warning.contains("alta dispersion", ignoreCase = true) ||
+                        warning.contains("alta dispersión", ignoreCase = true)
+                }
+            }
+            .map { it.city.name }
+
+        if (warningCities.isNotEmpty()) {
+            messages += "Dispersion alta: ${warningCities.joinToString("/")}"
+        }
+
+        val errorSources = cities.sumOf { city ->
+            city.forecasts.count { source -> source.status == SourceStatus.ERROR }
+        }
+        if (errorSources > 0) {
+            messages += "Fuentes con error: $errorSources"
+        }
+
+        messages.joinToString("   •   ")
+    }
+
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 6.dp)
             .background(Color(0x101C2EFF))
             .border(1.dp, Color(0x2F77C4FF))
-            .padding(8.dp)
+            .padding(horizontal = 8.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text(
-            text = "Top Ejecutables",
-            style = MaterialTheme.typography.labelSmall,
-            color = Color(0xFF8FC8FF)
-        )
-
-        edges.forEach { (city, opp) ->
+        if (flashActive && flashOpportunity != null) {
             Text(
-                text = "$city • ${if (opp.shouldTrade) "BET" else "PASS"} • ${directionLabel(opp.direction)} • ${opp.recommendedBuy} ${formatPercent(opp.executableEdge)}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+                text = "FLASH",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Black),
+                color = Color(0xFFFF4D4F),
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 4.dp)
+                modifier = Modifier.alpha(flashAlpha)
             )
         }
+
+        Text(
+            text = tickerText,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Clip,
+            modifier = Modifier
+                .weight(1f)
+                .basicMarquee(
+                    iterations = Int.MAX_VALUE,
+                    animationMode = MarqueeAnimationMode.Immediately,
+                    repeatDelayMillis = 0,
+                    spacing = MarqueeSpacing(36.dp)
+                )
+        )
     }
 }
+
+private fun isFlashOpportunity(opportunity: TraderOpportunity): Boolean {
+    val liquidity = opportunity.liquidity ?: 0.0
+    return opportunity.shouldTrade &&
+        opportunity.signal == TraderSignalLevel.GREEN &&
+        opportunity.executableEdge >= FLASH_MIN_EXECUTABLE_EDGE &&
+        liquidity >= FLASH_MIN_LIQUIDITY
+}
+
+private const val FLASH_DURATION_MILLIS = 60_000L
+private const val FLASH_MIN_EXECUTABLE_EDGE = 0.20
+private const val FLASH_MIN_LIQUIDITY = 1_200.0
