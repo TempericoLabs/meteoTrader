@@ -15,11 +15,14 @@ import com.polymeteo.meteotrader.data.model.CityConfig
 import com.polymeteo.meteotrader.data.model.CityWeatherData
 import com.polymeteo.meteotrader.data.model.ControlStationSnapshot
 import com.polymeteo.meteotrader.data.model.ForecastSourceResult
+import com.polymeteo.meteotrader.data.model.MarketConditionType
+import com.polymeteo.meteotrader.data.model.MarketRangeCondition
 import com.polymeteo.meteotrader.data.model.MetarSnapshot
 import com.polymeteo.meteotrader.data.model.PolyTempPremiumReport
 import com.polymeteo.meteotrader.data.model.PolymarketSnapshot
 import com.polymeteo.meteotrader.data.model.SourceStatus
 import com.polymeteo.meteotrader.data.model.TafSnapshot
+import com.polymeteo.meteotrader.data.model.TempUnit
 import com.polymeteo.meteotrader.data.premium.PolyTempPremiumEngine
 import com.polymeteo.meteotrader.data.premium.PolyTempPremiumStore
 import com.polymeteo.meteotrader.data.premium.PremiumWeightSnapshot
@@ -126,16 +129,41 @@ class WeatherRepository(
             forecasts = forecasts,
             dynamicWeights = premiumWeights.weightsByProviderId
         )
-        val polymarketPolyTempC = polyTempPremiumComputation.polyTempC ?: polyTempBaseComputation.polyTempC
+        val observedMaxC = resolveObservedMaxC(metar, control)
+        val polyTempC = polyTempBaseComputation.polyTempC
+        val polyTempPremiumC = polyTempPremiumComputation.polyTempC ?: polyTempBaseComputation.polyTempC
+        val polyTempInvalid = isForecastInvalidForToday(
+            forecastTempC = polyTempC,
+            observedMaxC = observedMaxC
+        )
+        val polyTempPremiumInvalid = isForecastInvalidForToday(
+            forecastTempC = polyTempPremiumC,
+            observedMaxC = observedMaxC
+        )
+
+        val polymarketPolyTempC = normalizePolyTempForLiveFloor(
+            preferredForecastC = polyTempPremiumC ?: polyTempC,
+            observedMaxC = observedMaxC
+        )
         val polymarketForecastDailyMaxC = if (polyTempPremiumComputation.validMaxTempsC.isNotEmpty()) {
             polyTempPremiumComputation.validMaxTempsC
         } else {
             polyTempBaseComputation.validMaxTempsC
+        }.let { forecastTemps ->
+            normalizeForecastInputsForLiveFloor(
+                forecastTemps = forecastTemps,
+                observedMaxC = observedMaxC
+            )
         }
-        val polymarket = fetchPolymarketWithTimeout(
+        val rawPolymarket = fetchPolymarketWithTimeout(
             city = city,
             polyTempC = polymarketPolyTempC,
             forecastDailyMaxC = polymarketForecastDailyMaxC
+        )
+        val polymarket = filterImpossibleLiveMarkets(
+            snapshot = rawPolymarket,
+            observedMaxC = observedMaxC,
+            cityToday = targetDate
         )
 
         val warnings = buildList {
@@ -143,6 +171,12 @@ class WeatherRepository(
             taf.error?.let { add("TAF: $it") }
             control.error?.let { add("Wunderground: $it") }
             polymarket.error?.let { add("Polymarket: $it") }
+            if (polyTempInvalid && observedMaxC != null) {
+                add("PolyTEMP: invalido hoy (max observada ${String.format(Locale.US, "%.1f", observedMaxC)}°C)")
+            }
+            if (polyTempPremiumInvalid && observedMaxC != null) {
+                add("PolyTEMP PREMIUM: invalido hoy (max observada ${String.format(Locale.US, "%.1f", observedMaxC)}°C)")
+            }
             forecasts.filter { it.status == SourceStatus.ERROR }.forEach { result ->
                 result.error?.let { add("${result.sourceName}: $it") }
             }
@@ -161,11 +195,14 @@ class WeatherRepository(
             taf = taf,
             controlStation = control,
             forecasts = forecasts,
-            polyTempC = polyTempBaseComputation.polyTempC,
-            polyTempF = polyTempBaseComputation.polyTempC?.let(::celsiusToFahrenheit),
-            polyTempPremiumC = polyTempPremiumComputation.polyTempC ?: polyTempBaseComputation.polyTempC,
-            polyTempPremiumF = (polyTempPremiumComputation.polyTempC ?: polyTempBaseComputation.polyTempC)
+            observedMaxC = observedMaxC,
+            polyTempC = polyTempC,
+            polyTempF = polyTempC?.let(::celsiusToFahrenheit),
+            polyTempInvalid = polyTempInvalid,
+            polyTempPremiumC = polyTempPremiumC,
+            polyTempPremiumF = polyTempPremiumC
                 ?.let(::celsiusToFahrenheit),
+            polyTempPremiumInvalid = polyTempPremiumInvalid,
             polymarket = polymarket,
             updatedAt = Instant.now(),
             warnings = warnings
@@ -253,6 +290,96 @@ class WeatherRepository(
             topOpportunity = null,
             error = "Timeout Polymarket"
         )
+    }
+
+    private fun resolveObservedMaxC(
+        metar: MetarSnapshot,
+        control: ControlStationSnapshot
+    ): Double? {
+        return listOfNotNull(
+            metar.current?.tempC,
+            control.tempC
+        ).maxOrNull()
+    }
+
+    private fun isForecastInvalidForToday(
+        forecastTempC: Double?,
+        observedMaxC: Double?
+    ): Boolean {
+        if (forecastTempC == null || observedMaxC == null) return false
+        return forecastTempC < (observedMaxC - FORECAST_INVALID_EPSILON_C)
+    }
+
+    private fun normalizePolyTempForLiveFloor(
+        preferredForecastC: Double?,
+        observedMaxC: Double?
+    ): Double? {
+        return when {
+            preferredForecastC == null -> observedMaxC
+            observedMaxC == null -> preferredForecastC
+            else -> max(preferredForecastC, observedMaxC)
+        }
+    }
+
+    private fun normalizeForecastInputsForLiveFloor(
+        forecastTemps: List<Double>,
+        observedMaxC: Double?
+    ): List<Double> {
+        if (observedMaxC == null) return forecastTemps
+        if (forecastTemps.isEmpty()) return listOf(observedMaxC)
+        if (forecastTemps.any { value -> abs(value - observedMaxC) <= FORECAST_INVALID_EPSILON_C }) {
+            return forecastTemps
+        }
+        return forecastTemps + observedMaxC
+    }
+
+    private fun filterImpossibleLiveMarkets(
+        snapshot: PolymarketSnapshot,
+        observedMaxC: Double?,
+        cityToday: LocalDate
+    ): PolymarketSnapshot {
+        if (observedMaxC == null || snapshot.opportunities.isEmpty()) {
+            return snapshot
+        }
+        val filtered = snapshot.opportunities.filter { opportunity ->
+            val targetDate = opportunity.condition.targetDate
+            if (targetDate != null && targetDate != cityToday) {
+                true
+            } else {
+                isMarketStillPossibleForToday(
+                    condition = opportunity.condition,
+                    observedMaxC = observedMaxC
+                )
+            }
+        }
+        val topToday = filtered
+            .filter { it.condition.targetDate == null || it.condition.targetDate == cityToday }
+            .maxByOrNull { it.executableEdge }
+
+        return snapshot.copy(
+            opportunities = filtered,
+            topOpportunity = topToday ?: filtered.firstOrNull()
+        )
+    }
+
+    private fun isMarketStillPossibleForToday(
+        condition: MarketRangeCondition,
+        observedMaxC: Double
+    ): Boolean {
+        val observed = if (condition.unit == TempUnit.C) {
+            observedMaxC
+        } else {
+            celsiusToFahrenheit(observedMaxC)
+        }
+        return when (condition.type) {
+            MarketConditionType.GREATER_OR_EQUAL -> true
+            MarketConditionType.LESS_OR_EQUAL -> observed <= condition.threshold + FORECAST_INVALID_EPSILON_C
+            MarketConditionType.EXACT -> observed < (condition.threshold + LIVE_BUCKET_HALF_WIDTH - FORECAST_INVALID_EPSILON_C)
+            MarketConditionType.BETWEEN -> {
+                val upper = condition.upperThreshold ?: condition.threshold
+                observed < (upper + LIVE_BUCKET_HALF_WIDTH - FORECAST_INVALID_EPSILON_C)
+            }
+        }
     }
 
     private suspend fun fetchPremiumWeightsWithTimeout(
@@ -383,6 +510,8 @@ class WeatherRepository(
         private const val POLYMARKET_TIMEOUT_MS = 6_000L
         private const val PREMIUM_TIMEOUT_MS = 5_000L
         private const val MIN_FORECASTS_FOR_HIGH_CONFIDENCE = 3
+        private const val LIVE_BUCKET_HALF_WIDTH = 0.5
+        private const val FORECAST_INVALID_EPSILON_C = 0.001
         private val VALID_TEMP_RANGE_C = -80.0..65.0
 
         fun createDefault(context: Context? = null): WeatherRepository {

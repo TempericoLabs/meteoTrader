@@ -285,6 +285,7 @@ private fun CityCard(
     val delta = data.metarDeltaInUnit()
     val control = data.controlTempInUnit()
     val poly = data.polyTempInUnit()
+    val polyColor = if (data.polyTempInvalid) Negative else MaterialTheme.colorScheme.onSurface
     val topTrader = data.polymarket.topOpportunity
 
     val deltaColor = when {
@@ -344,6 +345,7 @@ private fun CityCard(
             InlineMetric(
                 label = "P",
                 value = formatTemperature(poly, data.city.displayUnit, digits = 0),
+                valueColor = polyColor,
                 modifier = Modifier.weight(1f)
             )
         }

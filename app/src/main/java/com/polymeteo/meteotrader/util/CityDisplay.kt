@@ -28,3 +28,8 @@ fun CityWeatherData.polyTempInUnit(): Double? {
 fun CityWeatherData.polyTempPremiumInUnit(): Double? {
     return if (city.displayUnit == TempUnit.C) polyTempPremiumC else polyTempPremiumF
 }
+
+fun CityWeatherData.observedMaxInUnit(): Double? {
+    val observed = observedMaxC ?: return null
+    return if (city.displayUnit == TempUnit.C) observed else celsiusToFahrenheit(observed)
+}

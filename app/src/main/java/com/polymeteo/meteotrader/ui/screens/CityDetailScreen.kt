@@ -66,6 +66,7 @@ import com.polymeteo.meteotrader.util.formatTemperature
 import com.polymeteo.meteotrader.util.metarCurrentInUnit
 import com.polymeteo.meteotrader.util.metarDeltaInUnit
 import com.polymeteo.meteotrader.util.metarPreviousInUnit
+import com.polymeteo.meteotrader.util.observedMaxInUnit
 import com.polymeteo.meteotrader.util.polyTempInUnit
 import com.polymeteo.meteotrader.util.polyTempPremiumInUnit
 import java.time.Duration
@@ -158,6 +159,20 @@ fun CityDetailScreen(
                 valueInDisplayUnit = cityData.polyTempPremiumInUnit(),
                 displayUnit = unit
             )
+            val observedMaxInDisplayUnit = cityData.observedMaxInUnit()
+            val polyTempInvalid = cityData.polyTempInvalid
+            val polyTempPremiumInvalid = cityData.polyTempPremiumInvalid
+            val polyDisplayColor = if (polyTempInvalid) Negative else Positive
+            val polyPremiumDisplayColor = if (polyTempPremiumInvalid) Negative else Positive
+            val polyDisplayValue = appendForecastInvalidSuffix(
+                temperature = polyWithSecondaryUnit,
+                invalid = polyTempInvalid
+            )
+            val polyPremiumDisplayValue = appendForecastInvalidSuffix(
+                temperature = polyPremiumWithSecondaryUnit,
+                invalid = polyTempPremiumInvalid
+            )
+            val observedMaxLabel = formatTemperature(observedMaxInDisplayUnit, unit)
             val tafIssuedAt = cityData.taf.issuedAt.formatInZone(cityData.city.zoneId, "dd-MM-yyyy HH:mm")
             val tafValidity = formatTafValidityWindow(
                 from = cityData.taf.validFrom,
@@ -173,13 +188,21 @@ fun CityDetailScreen(
             )
             var selectedDayIndex by rememberSaveable(cityData.city.id) { mutableStateOf(0) }
             val selectedTab = dayTabs.getOrElse(selectedDayIndex) { dayTabs.first() }
-            val selectedOpportunities = cityData.polymarket.opportunities
+            val selectedCandidates = cityData.polymarket.opportunities
                 .filter { opportunity ->
                     val targetDate = opportunity.condition.targetDate
                     (targetDate == null && selectedTab.date == cityToday) || targetDate == selectedTab.date
                 }
-                .sortedByDescending { it.executableEdge }
-            val selectedTopOpportunity = selectedOpportunities.firstOrNull()
+            val selectedTopOpportunity = selectedCandidates.maxByOrNull { it.executableEdge }
+            val selectedOpportunities = if (selectedTab.date == cityToday && cityData.observedMaxC != null) {
+                selectedCandidates
+                    .sortedWith(
+                        compareByDescending<TraderOpportunity> { it.modelProbabilityYes }
+                            .thenBy { it.condition.threshold }
+                    )
+            } else {
+                selectedCandidates.sortedByDescending { it.executableEdge }
+            }
             val opportunitiesByDate = cityData.polymarket.opportunities.groupBy { it.condition.targetDate }
 
             LazyColumn(
@@ -207,15 +230,24 @@ fun CityDetailScreen(
                         DetailPair("Temp estación control", controlWithSecondaryUnit)
                         DetailPair(
                             label = "PolyTEMP",
-                            value = polyWithSecondaryUnit,
-                            labelColor = Positive,
-                            valueColor = Positive,
+                            value = polyDisplayValue,
+                            labelColor = polyDisplayColor,
+                            valueColor = polyDisplayColor,
                             valueFontWeight = FontWeight.Bold
                         )
                         PolyTempPremiumLink(
-                            value = polyPremiumWithSecondaryUnit,
+                            value = polyPremiumDisplayValue,
+                            valueColor = polyPremiumDisplayColor,
                             onClick = onOpenPolyTempPremium
                         )
+                        if (polyTempInvalid || polyTempPremiumInvalid) {
+                            Text(
+                                text = "Modelo invalidado hoy: ya se observo ${observedMaxLabel} en la ciudad.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Negative,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -426,6 +458,7 @@ private fun DetailPair(
 @Composable
 private fun PolyTempPremiumLink(
     value: String,
+    valueColor: Color,
     onClick: () -> Unit
 ) {
     Row(
@@ -445,11 +478,19 @@ private fun PolyTempPremiumLink(
         Text(
             text = value,
             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-            color = Positive,
+            color = valueColor,
             textDecoration = TextDecoration.Underline,
             modifier = Modifier.clickable { onClick() }
         )
     }
+}
+
+private fun appendForecastInvalidSuffix(
+    temperature: String,
+    invalid: Boolean
+): String {
+    if (!invalid || temperature == "--") return temperature
+    return "$temperature (No valida hoy)"
 }
 
 private fun appendObservationTime(

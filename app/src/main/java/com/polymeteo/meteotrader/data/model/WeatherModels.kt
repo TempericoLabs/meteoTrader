@@ -136,10 +136,13 @@ data class CityWeatherData(
     val taf: TafSnapshot,
     val controlStation: ControlStationSnapshot,
     val forecasts: List<ForecastSourceResult>,
+    val observedMaxC: Double?,
     val polyTempC: Double?,
     val polyTempF: Double?,
+    val polyTempInvalid: Boolean,
     val polyTempPremiumC: Double?,
     val polyTempPremiumF: Double?,
+    val polyTempPremiumInvalid: Boolean,
     val polymarket: PolymarketSnapshot,
     val updatedAt: Instant,
     val warnings: List<String>
