@@ -10,7 +10,6 @@ import com.polymeteo.meteotrader.data.forecast.OpenMeteoProvider
 import com.polymeteo.meteotrader.data.forecast.OpenWeatherProvider
 import com.polymeteo.meteotrader.data.forecast.PlaceholderEcmwfProvider
 import com.polymeteo.meteotrader.data.forecast.WeatherGovProvider
-import com.polymeteo.meteotrader.data.forecast.WeatherStackProvider
 import com.polymeteo.meteotrader.data.forecast.WindyProvider
 import com.polymeteo.meteotrader.data.model.BacktestReport
 import com.polymeteo.meteotrader.data.model.CityConfig
@@ -110,19 +109,29 @@ class WeatherRepository(
         val control = controlDeferred.await()
         val forecasts = forecastsDeferred.awaitAll()
 
+        val polyTempBaseComputation = computePolyTemp(
+            forecasts = forecasts,
+            dynamicWeights = emptyMap()
+        )
         val premiumWeights = fetchPremiumWeightsWithTimeout(
             city = city,
             targetDate = targetDate,
             forecasts = forecasts
         )
-        val polyTempComputation = computePolyTemp(
+        val polyTempPremiumComputation = computePolyTemp(
             forecasts = forecasts,
             dynamicWeights = premiumWeights.weightsByProviderId
         )
+        val polymarketPolyTempC = polyTempPremiumComputation.polyTempC ?: polyTempBaseComputation.polyTempC
+        val polymarketForecastDailyMaxC = if (polyTempPremiumComputation.validMaxTempsC.isNotEmpty()) {
+            polyTempPremiumComputation.validMaxTempsC
+        } else {
+            polyTempBaseComputation.validMaxTempsC
+        }
         val polymarket = fetchPolymarketWithTimeout(
             city = city,
-            polyTempC = polyTempComputation.polyTempC,
-            forecastDailyMaxC = polyTempComputation.validMaxTempsC
+            polyTempC = polymarketPolyTempC,
+            forecastDailyMaxC = polymarketForecastDailyMaxC
         )
 
         val warnings = buildList {
@@ -132,7 +141,11 @@ class WeatherRepository(
             forecasts.filter { it.status == SourceStatus.ERROR }.forEach { result ->
                 result.error?.let { add("${result.sourceName}: $it") }
             }
-            addAll(polyTempComputation.warnings)
+            addAll(polyTempBaseComputation.warnings)
+            addAll(
+                polyTempPremiumComputation.warnings
+                    .map { warning -> warning.replace("PolyTEMP", "PolyTEMP PREMIUM") }
+            )
             addAll(premiumWeights.warnings)
         }
 
@@ -142,8 +155,11 @@ class WeatherRepository(
             metar = metar,
             controlStation = control,
             forecasts = forecasts,
-            polyTempC = polyTempComputation.polyTempC,
-            polyTempF = polyTempComputation.polyTempC?.let(::celsiusToFahrenheit),
+            polyTempC = polyTempBaseComputation.polyTempC,
+            polyTempF = polyTempBaseComputation.polyTempC?.let(::celsiusToFahrenheit),
+            polyTempPremiumC = polyTempPremiumComputation.polyTempC ?: polyTempBaseComputation.polyTempC,
+            polyTempPremiumF = (polyTempPremiumComputation.polyTempC ?: polyTempBaseComputation.polyTempC)
+                ?.let(::celsiusToFahrenheit),
             polymarket = polymarket,
             updatedAt = Instant.now(),
             warnings = warnings
@@ -409,7 +425,6 @@ class WeatherRepository(
                     name = "Open-Meteo ECMWF AIFS"
                 ),
                 OpenWeatherProvider(httpClient, BuildConfig.OPEN_WEATHER_API_KEY),
-                WeatherStackProvider(httpClient, BuildConfig.WEATHERSTACK_API_KEY),
                 WeatherGovProvider(httpClient),
                 PlaceholderEcmwfProvider()
             )

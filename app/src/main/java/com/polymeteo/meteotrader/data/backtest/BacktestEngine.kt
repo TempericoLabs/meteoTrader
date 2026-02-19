@@ -213,7 +213,7 @@ class BacktestEngine(
             liquidity = opportunity.liquidity,
             volume24h = opportunity.volume24h,
             spread = opportunity.spread,
-            polyTempC = cityData.polyTempC,
+            polyTempC = cityData.polyTempPremiumC ?: cityData.polyTempC,
             isHistoricalSeed = false
         )
     }

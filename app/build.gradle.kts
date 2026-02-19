@@ -35,7 +35,6 @@ android {
         buildConfigField("String", "ECMWF_API_KEY", "\"${localProperty("ECMWF_API_KEY")}\"")
         buildConfigField("String", "ECMWF_EMAIL", "\"${localProperty("ECMWF_EMAIL")}\"")
         buildConfigField("String", "OPEN_WEATHER_API_KEY", "\"${localProperty("OPEN_WEATHER_API_KEY")}\"")
-        buildConfigField("String", "WEATHERSTACK_API_KEY", "\"${localProperty("WEATHERSTACK_API_KEY")}\"")
         buildConfigField("String", "NOAA_TOKEN", "\"${localProperty("NOAA_TOKEN")}\"")
         buildConfigField("String", "METSERVICE_API_KEY", "\"${localProperty("METSERVICE_API_KEY")}\"")
         buildConfigField("boolean", "DEMO_MODE", if (localProperty("DEMO_MODE").toBoolean()) "true" else "false")

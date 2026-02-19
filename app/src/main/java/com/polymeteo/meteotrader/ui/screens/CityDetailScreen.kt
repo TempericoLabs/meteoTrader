@@ -66,6 +66,7 @@ import com.polymeteo.meteotrader.util.metarCurrentInUnit
 import com.polymeteo.meteotrader.util.metarDeltaInUnit
 import com.polymeteo.meteotrader.util.metarPreviousInUnit
 import com.polymeteo.meteotrader.util.polyTempInUnit
+import com.polymeteo.meteotrader.util.polyTempPremiumInUnit
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
@@ -152,6 +153,10 @@ fun CityDetailScreen(
                 valueInDisplayUnit = cityData.polyTempInUnit(),
                 displayUnit = unit
             )
+            val polyPremiumWithSecondaryUnit = formatTemperatureWithAlternateUnit(
+                valueInDisplayUnit = cityData.polyTempPremiumInUnit(),
+                displayUnit = unit
+            )
             val cityZoneId = ZoneId.of(cityData.city.zoneId)
             val cityToday = LocalDate.now(cityZoneId)
             val dayTabs = listOf(
@@ -200,7 +205,10 @@ fun CityDetailScreen(
                             valueColor = Positive,
                             valueFontWeight = FontWeight.Bold
                         )
-                        PolyTempPremiumLink(onClick = onOpenPolyTempPremium)
+                        PolyTempPremiumLink(
+                            value = polyPremiumWithSecondaryUnit,
+                            onClick = onOpenPolyTempPremium
+                        )
                         SourceLinkRow(
                             label = "Fuente METAR",
                             url = cityData.metar.sourceUrl,
@@ -369,7 +377,10 @@ private fun DetailPair(
 }
 
 @Composable
-private fun PolyTempPremiumLink(onClick: () -> Unit) {
+private fun PolyTempPremiumLink(
+    value: String,
+    onClick: () -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -385,9 +396,9 @@ private fun PolyTempPremiumLink(onClick: () -> Unit) {
             modifier = Modifier.clickable { onClick() }
         )
         Text(
-            text = "Verificación",
-            style = MaterialTheme.typography.labelSmall,
-            color = Color(0xFF8FC8FF),
+            text = value,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = Positive,
             textDecoration = TextDecoration.Underline,
             modifier = Modifier.clickable { onClick() }
         )

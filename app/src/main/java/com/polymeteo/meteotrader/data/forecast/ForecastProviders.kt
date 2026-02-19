@@ -20,9 +20,6 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.format.DateTimeParseException
 import java.time.ZoneId
-import java.time.temporal.ChronoUnit
-import java.net.URLEncoder
-import java.util.Locale
 
 interface ForecastProvider {
     val id: String
@@ -199,70 +196,6 @@ class OpenWeatherProvider(
             successResult(this, maxTemp, current)
         }.getOrElse { throwable ->
             errorResult(this, throwable.message ?: "Error OpenWeather")
-        }
-    }
-}
-
-class WeatherStackProvider(
-    private val httpClient: HttpClient,
-    private val apiKey: String,
-    private val json: Json = Json { ignoreUnknownKeys = true }
-) : ForecastProvider {
-
-    override val id: String = "weatherstack"
-    override val name: String = "Weatherstack"
-
-    override suspend fun fetch(city: CityConfig, targetDate: LocalDate): ForecastSourceResult {
-        if (apiKey.isBlank()) {
-            return errorResult(this, "WEATHERSTACK_API_KEY vacío", SourceStatus.SKIPPED)
-        }
-
-        val zoneId = ZoneId.of(city.zoneId)
-        val today = LocalDate.now(zoneId)
-        val daysAhead = ChronoUnit.DAYS.between(today, targetDate).toInt()
-        val forecastDays = (daysAhead + 1).coerceIn(1, 3)
-        val queryRaw = String.format(Locale.US, "%.4f,%.4f", city.latitude, city.longitude)
-        val query = URLEncoder.encode(queryRaw, Charsets.UTF_8.name())
-        val url = buildString {
-            append("https://api.weatherstack.com/forecast")
-            append("?access_key=$apiKey")
-            append("&query=$query")
-            append("&forecast_days=$forecastDays")
-            append("&hourly=1")
-            append("&units=m")
-        }
-
-        return runCatching {
-            val response = httpClient.get(url)
-            if (response.code !in 200..299) {
-                return errorResult(this, compactHttpError(response.code, response.body))
-            }
-            val root = json.parseToJsonElement(response.body) as? JsonObject
-                ?: return errorResult(this, "Payload Weatherstack inválido")
-
-            val isSuccess = root["success"]?.let { (it as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() }
-            if (isSuccess == false || root.objOrNull("error") != null) {
-                val errorObj = root.objOrNull("error")
-                val code = errorObj?.longOrNull("code")
-                val errorMessage = compactApiError(root, "Error Weatherstack")
-                val status = when (code?.toInt()) {
-                    403, 609 -> SourceStatus.SKIPPED // plan sin forecast
-                    else -> SourceStatus.ERROR
-                }
-                return errorResult(this, errorMessage, status)
-            }
-
-            val forecast = root.objOrNull("forecast")
-            val dayObject = (forecast?.get(targetDate.toString()) as? JsonObject)
-                ?: (forecast?.entries?.firstOrNull()?.value as? JsonObject)
-            val maxTemp = dayObject?.doubleOrNull("maxtemp") ?: dayObject?.doubleOrNull("maxtempC")
-            val current = root.objOrNull("current")?.doubleOrNull("temperature")
-            if (maxTemp == null) {
-                return errorResult(this, "Weatherstack sin maxtemp para ${targetDate}", SourceStatus.ERROR)
-            }
-            successResult(this, maxTemp, current)
-        }.getOrElse { throwable ->
-            errorResult(this, throwable.message ?: "Error Weatherstack")
         }
     }
 }

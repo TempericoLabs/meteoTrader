@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.polymeteo.meteotrader.data.model.CityWeatherData
+import com.polymeteo.meteotrader.data.model.TempUnit
 import com.polymeteo.meteotrader.data.model.TraderSignalLevel
 import com.polymeteo.meteotrader.ui.MeteoUiState
 import com.polymeteo.meteotrader.ui.theme.DarkBase
@@ -44,13 +45,14 @@ import com.polymeteo.meteotrader.ui.theme.Negative
 import com.polymeteo.meteotrader.ui.theme.Positive
 import com.polymeteo.meteotrader.util.controlTempInUnit
 import com.polymeteo.meteotrader.util.directionLabel
-import com.polymeteo.meteotrader.util.formatDelta
 import com.polymeteo.meteotrader.util.formatInZone
 import com.polymeteo.meteotrader.util.formatPercent
 import com.polymeteo.meteotrader.util.formatTemperature
 import com.polymeteo.meteotrader.util.metarCurrentInUnit
 import com.polymeteo.meteotrader.util.metarDeltaInUnit
 import com.polymeteo.meteotrader.util.polyTempInUnit
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -266,7 +268,7 @@ private fun CityCard(
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             InlineMetric(
                 label = "M",
@@ -275,7 +277,7 @@ private fun CityCard(
             )
             InlineMetric(
                 label = "Δ",
-                value = formatDelta(delta, data.city.displayUnit),
+                value = formatCompactDelta(delta, data.city.displayUnit),
                 valueColor = deltaColor,
                 modifier = Modifier.weight(1f)
             )
@@ -334,8 +336,8 @@ private fun InlineMetric(
     valueColor: Color = MaterialTheme.colorScheme.onSurface
 ) {
     Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
@@ -349,9 +351,22 @@ private fun InlineMetric(
             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
             color = valueColor,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            softWrap = false,
+            overflow = TextOverflow.Clip
         )
     }
+}
+
+private fun formatCompactDelta(value: Double?, unit: TempUnit): String {
+    if (value == null) return "--"
+    val rounded = value.roundToInt()
+    val sign = when {
+        rounded > 0 -> "+"
+        rounded < 0 -> "-"
+        else -> "±"
+    }
+    val absValue = if (rounded == 0) 0 else abs(rounded)
+    return "$sign$absValue°${unit.symbol}"
 }
 
 @Composable

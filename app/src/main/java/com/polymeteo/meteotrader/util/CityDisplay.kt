@@ -24,3 +24,7 @@ fun CityWeatherData.controlTempInUnit(): Double? {
 fun CityWeatherData.polyTempInUnit(): Double? {
     return if (city.displayUnit == TempUnit.C) polyTempC else polyTempF
 }
+
+fun CityWeatherData.polyTempPremiumInUnit(): Double? {
+    return if (city.displayUnit == TempUnit.C) polyTempPremiumC else polyTempPremiumF
+}

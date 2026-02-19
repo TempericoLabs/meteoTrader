@@ -127,6 +127,8 @@ data class CityWeatherData(
     val forecasts: List<ForecastSourceResult>,
     val polyTempC: Double?,
     val polyTempF: Double?,
+    val polyTempPremiumC: Double?,
+    val polyTempPremiumF: Double?,
     val polymarket: PolymarketSnapshot,
     val updatedAt: Instant,
     val warnings: List<String>

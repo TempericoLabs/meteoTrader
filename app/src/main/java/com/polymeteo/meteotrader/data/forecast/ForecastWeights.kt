@@ -16,7 +16,6 @@ object ForecastWeights {
         "weather-gov" to 1.10,
         "windy-gfs" to 1.05,
         "openweather" to 0.85,
-        "weatherstack" to 0.75,
         "ecmwf-webapi" to 1.20
     )
 
