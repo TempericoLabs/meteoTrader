@@ -297,12 +297,14 @@
     <section id="indice" class="box toc">
       <h2>Índice</h2>
       <ol>
+        <li><a href="#novedades-v21">Novedades desde la versión anterior (v2.1)</a></li>
         <li><a href="#capitulo-0">Capítulo 0: Basics de mercados de predicción</a></li>
         <li><a href="#capitulo-1">Capítulo 1: Qué es Polymarket y por qué esta app es clave</a></li>
         <li><a href="#capitulo-2">Capítulo 2: Flujo general de uso (de principiante a operativo)</a></li>
         <li><a href="#pantalla-ciudades">Pantalla 1: CIUDADES (lectura táctica rápida)</a></li>
         <li><a href="#pantalla-detalle">Pantalla 2: DETALLE (análisis completo por ciudad)</a></li>
-        <li><a href="#pantalla-paper">Pantalla 3: Paper Trading (simulación end-to-end)</a></li>
+        <li><a href="#pantalla-premium">Pantalla 3: PolyTemp PREMIUM (aprendizaje y verificación)</a></li>
+        <li><a href="#pantalla-paper">Pantalla 4: Paper Trading (simulación end-to-end)</a></li>
         <li><a href="#londres">Caso guiado Londres: soleado vs nublado + edge cases</a></li>
         <li><a href="#demo-vs-normal">DEMO MODE vs modo normal (tabla clara)</a></li>
         <li><a href="#riesgos-psicologia">Riesgos, psicología y juego responsable</a></li>
@@ -310,6 +312,33 @@
         <li><a href="#faq">FAQ para no técnicos</a></li>
         <li><a href="#glosario">Glosario alfabético (simple + ejemplo)</a></li>
       </ol>
+    </section>
+
+    <section id="novedades-v21">
+      <h2>Novedades desde la versión anterior (v2.1)</h2>
+      <div class="box">
+        <h3>Cambios visibles para el usuario</h3>
+        <ul>
+          <li><strong>CIUDADES:</strong> el bloque fijo de <code>Top Ejecutables</code> ahora es un <strong>ticker horizontal dinámico</strong> (estilo cotizaciones) con información útil en tiempo real.</li>
+          <li><strong>Alerta FLASH:</strong> si aparece una oportunidad fuerte y ejecutable, se muestra <code>FLASH</code> en rojo parpadeante durante 1 minuto para priorizar revisión inmediata.</li>
+          <li><strong>DETALLE:</strong> <code>PolyTemp PREMIUM</code> muestra valor numérico (no solo enlace) y abre su dashboard al pulsar en etiqueta o valor.</li>
+          <li><strong>DETALLE:</strong> se mantiene la mejora de lectura de <code>METAR actual</code> con fecha/hora y <code>METAR anterior</code> con <code>(Hace X horas)</code>.</li>
+          <li><strong>DETALLE:</strong> temperaturas clave muestran unidad principal + conversión entre paréntesis para evitar errores de interpretación.</li>
+        </ul>
+      </div>
+
+      <div class="box-alt">
+        <h3>Criterio técnico actual para activar FLASH</h3>
+        <ul>
+          <li>La oportunidad debe estar en <strong>BET</strong> (ejecutable).</li>
+          <li>Señal de calidad <strong>VERDE</strong>.</li>
+          <li><code>Edge ejecutable</code> mínimo de <strong>20%</strong>.</li>
+          <li><code>Liquidez</code> mínima aproximada de <strong>1200</strong>.</li>
+        </ul>
+        <p class="small muted">
+          Importante: FLASH no es “compra obligatoria”. Es un aviso de prioridad para revisar en DETALLE antes de decidir.
+        </p>
+      </div>
     </section>
 
     <section id="capitulo-0">
@@ -432,8 +461,8 @@
         <p><span class="tag">Ruta básica (día 1)</span><span class="tag">Ruta avanzada (día 7+)</span></p>
         <h3>Ruta básica (3 pasos)</h3>
         <ol>
-          <li>CIUDADES: detectar 1-2 candidatos con mejor perfil.</li>
-          <li>DETALLE: confirmar datos METAR/estación/PolyTEMP y revisar Trader Mode.</li>
+          <li>CIUDADES: usar ticker + tarjetas para detectar 1-2 candidatos con mejor perfil.</li>
+          <li>DETALLE: confirmar datos METAR/estación/PolyTEMP/PolyTemp PREMIUM y revisar Trader Mode.</li>
           <li>Paper Trading: verificar si expected se convierte en realized.</li>
         </ol>
 
@@ -449,8 +478,8 @@
     <section id="pantalla-ciudades">
       <h2>Pantalla 1: CIUDADES (lectura táctica rápida)</h2>
       <figure>
-        <img src="./assets/screens/cities-screen.svg" alt="Pantalla CIUDADES con cabecera, top ejecutables y grid de 14 ciudades" />
-        <figcaption>Visual orientativo de la pantalla CIUDADES. En móvil se adapta a una columna visual más compacta.</figcaption>
+        <img src="./assets/screens/cities-screen.svg" alt="Pantalla CIUDADES con cabecera, ticker dinámico y grid de 14 ciudades" />
+        <figcaption>Visual orientativo de la pantalla CIUDADES. Actualmente el bloque superior de oportunidades se muestra como ticker dinámico horizontal.</figcaption>
       </figure>
 
       <div class="box">
@@ -461,7 +490,8 @@
           </thead>
           <tbody>
             <tr><td><code>Actualizado</code></td><td>Hora de último refresh global.</td><td>Evita decidir con datos viejos.</td><td>Si está desactualizado, refresca.</td></tr>
-            <tr><td><code>Top Ejecutables</code></td><td>Mejores oportunidades por edge ejecutable.</td><td>Reduce ruido y prioriza.</td><td>Empieza por las 1-3 primeras.</td></tr>
+            <tr><td><code>Ticker dinámico</code></td><td>Línea móvil con oportunidades y estado global (ejecutables, tops, alertas y errores).</td><td>Reduce ruido sin perder contexto.</td><td>Lee primero el ticker para priorizar en qué ciudad entrar a DETALLE.</td></tr>
+            <tr><td><code>FLASH</code></td><td>Etiqueta roja parpadeante durante 1 minuto cuando hay oportunidad fuerte y ejecutable.</td><td>Sirve de alerta temprana para no llegar tarde.</td><td>No entres por impulso: úsalo para abrir DETALLE y validar costes/fill.</td></tr>
             <tr><td><code>M</code></td><td>METAR actual.</td><td>Pulso real y oficial del aeropuerto.</td><td>Compáralo con PolyTEMP y estación.</td></tr>
             <tr><td><code>Δ</code></td><td>Cambio vs METAR anterior.</td><td>Momentum térmico inmediato.</td><td>Delta alta puede invalidar tesis vieja.</td></tr>
             <tr><td><code>S</code></td><td>Estación control (Wunderground).</td><td>Dato de referencia para validación.</td><td>Si S y M divergen mucho, cautela.</td></tr>
@@ -469,6 +499,19 @@
             <tr><td>Chip trader</td><td>Dirección + BET/PASS + lado + edge ejecutable.</td><td>Resume oportunidad real.</td><td>BET no significa “obligatorio”; valida detalle.</td></tr>
           </tbody>
         </table>
+      </div>
+
+      <div class="box-alt">
+        <h3>Cómo leer el ticker (ejemplo rápido)</h3>
+        <p>
+          Ejemplo: <code>FLASH London UNDER NO 57.5% • Ejecutables 5/14 • 1 Seoul OVER BET YES 22.4% • Fuentes con error: 2</code>
+        </p>
+        <ul>
+          <li><code>FLASH ...</code>: prioridad alta de revisión inmediata.</li>
+          <li><code>Ejecutables 5/14</code>: cuántas ciudades tienen top opportunity operable ahora.</li>
+          <li><code>1 Seoul ...</code>: ranking de las mejores oportunidades del momento.</li>
+          <li><code>Fuentes con error: 2</code>: calidad de datos; si sube, aumenta prudencia.</li>
+        </ul>
       </div>
     </section>
 
@@ -486,12 +529,13 @@
             <tr><th>Campo</th><th>Qué es</th><th>Qué te aporta</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>METAR actual</code></td><td>Temperatura observada más reciente.</td><td>Referencia inmediata de realidad.</td></tr>
+            <tr><td><code>METAR actual</code></td><td>Temperatura observada más reciente + fecha/hora local de observación.</td><td>Te confirma exactamente qué dato estás usando y cuándo se tomó.</td></tr>
             <tr><td><code>METAR anterior (Hace X horas)</code></td><td>Lectura previa del día.</td><td>Permite medir aceleración/estabilidad.</td></tr>
             <tr><td><code>Diferencia</code></td><td>Actual - anterior.</td><td>Si cambia fuerte, puede romper una tesis.</td></tr>
-            <tr><td><code>Temp estación control</code></td><td>Máxima actual acumulada del día.</td><td>Clave para resolver mercados diarios.</td></tr>
-            <tr><td><code>PolyTEMP</code></td><td>Consenso de modelos forecast.</td><td>Centro probabilístico del día.</td></tr>
-            <tr><td><code>Fuente METAR</code> y <code>Fuente estación</code></td><td>Enlaces externos clicables.</td><td>Auditoría y verificación directa.</td></tr>
+            <tr><td><code>Temp estación control</code></td><td>Máxima actual acumulada del día con unidad principal + unidad alternativa.</td><td>Clave para resolver mercados diarios sin errores de escala C/F.</td></tr>
+            <tr><td><code>PolyTEMP</code></td><td>Consenso de modelos forecast (sin aprendizaje dinámico), resaltado en verde.</td><td>Punto de referencia base para comparar con mercado.</td></tr>
+            <tr><td><code>PolyTemp PREMIUM</code></td><td>Estimación con aprendizaje diario por ciudad/modelo; valor numérico clicable.</td><td>Estimación adaptativa que debe mejorar con historial de verificación.</td></tr>
+            <tr><td><code>Fuente METAR</code> y <code>Fuente estación</code></td><td>Etiquetas clicables con acción <code>Abrir</code> (sin mostrar URL larga en pantalla).</td><td>Auditoría y verificación directa sin ensuciar la lectura.</td></tr>
           </tbody>
         </table>
       </div>
@@ -510,7 +554,7 @@
           <li><code>Hoy / Mañana / Pasado</code>: cambia horizonte del mercado.</li>
           <li><code>Top ejecutable</code>: la mejor idea del horizonte seleccionado.</li>
           <li><code>Calibración local activa</code>: ajusta incertidumbre por ciudad/franja/horizonte.</li>
-          <li>Ayudas clicables en todos los términos clave.</li>
+          <li>Ayudas clicables en términos clave (<code>OVER/UNDER/RANGE</code>, <code>YES/NO</code>, <code>BET/PASS</code>, <code>EXEC</code>, <code>COSTES</code>, <code>FILL</code>, etc.).</li>
         </ul>
       </div>
 
@@ -532,8 +576,39 @@
       </div>
     </section>
 
+    <section id="pantalla-premium">
+      <h2>Pantalla 3: PolyTemp PREMIUM (aprendizaje y verificación)</h2>
+      <div class="box">
+        <p>
+          Esta pantalla se abre desde <code>PolyTemp PREMIUM</code> en DETALLE.
+          Es el dashboard de aprendizaje continuo por ciudad: compara cada modelo contra el observado real y ajusta pesos.
+        </p>
+        <table>
+          <thead>
+            <tr><th>Bloque</th><th>Qué muestra</th><th>Cómo usarlo para decidir mejor</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>Motor de aprendizaje continuo</code></td><td>Fecha de generación, días verificados y pendientes.</td><td>Más días verificados = más confianza en la adaptación de pesos.</td></tr>
+            <tr><td><code>Ranking vivo de modelos</code></td><td>Peso dinámico, peso base, multiplicador, MAE, RMSE, cobertura, Hit<=1C, score.</td><td>Prioriza ciudades donde los modelos con mayor peso tienen error bajo y cobertura alta.</td></tr>
+            <tr><td><code>Verificación diaria (hasta ayer)</code></td><td>Por día: observado real, predicción por proveedor, error absoluto y estado.</td><td>Detecta rápido qué proveedores fallan sistemáticamente en esa ciudad.</td></tr>
+            <tr><td><code>Warnings / Error</code></td><td>Incidencias de cálculo o de fuentes.</td><td>Si hay warning crítico, reduce confianza operativa ese día.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="box-alt">
+        <h3>Interpretación práctica para principiantes</h3>
+        <ul>
+          <li>Si <code>MAE</code> y <code>RMSE</code> bajan con el tiempo, el motor está aprendiendo bien.</li>
+          <li>Si un modelo tiene <code>Cobertura</code> baja, no le des demasiado peso mental aunque tenga aciertos puntuales.</li>
+          <li>Si <code>Score</code> cae y error sube varios días, esa ciudad está en régimen difícil: baja agresividad.</li>
+          <li>Usa PolyTemp PREMIUM como “termómetro de confianza”, no como señal automática de entrada.</li>
+        </ul>
+      </div>
+    </section>
+
     <section id="pantalla-paper">
-      <h2>Pantalla 3: Paper Trading (simulación end-to-end)</h2>
+      <h2>Pantalla 4: Paper Trading (simulación end-to-end)</h2>
       <figure>
         <img src="./assets/screens/paper-screen.svg" alt="Pantalla Paper Trading con expected vs realized, fill y guardrails" />
         <figcaption>Visual orientativo de auditoría de ejecución y riesgo.</figcaption>
@@ -727,6 +802,8 @@
       <h2>FAQ para usuarios no técnicos</h2>
       <div class="faq-item"><strong>¿Necesito saber trading para usar la app?</strong><br/>No. Empieza por CIUDADES, luego DETALLE y finalmente Paper Trading. El orden importa.</div>
       <div class="faq-item"><strong>Si sale BET, ¿tengo que entrar sí o sí?</strong><br/>No. BET es señal favorable, no obligación. Tu control de riesgo manda.</div>
+      <div class="faq-item"><strong>¿Qué significa FLASH en la pantalla principal?</strong><br/>Es una alerta de prioridad alta durante 1 minuto cuando se detecta oportunidad fuerte y ejecutable. No es orden automática de compra.</div>
+      <div class="faq-item"><strong>¿PolyTEMP y PolyTemp PREMIUM son lo mismo?</strong><br/>No. PolyTEMP es promedio ponderado base; PolyTemp PREMIUM aplica aprendizaje diario por ciudad y ajusta pesos según acierto histórico.</div>
       <div class="faq-item"><strong>¿Qué hago si un dato sale raro o “--”?</strong><br/>Refresca y verifica fuentes externas con los enlaces clicables.</div>
       <div class="faq-item"><strong>¿Qué es mejor: acertar mucho o ganar dinero?</strong><br/>Ganar dinero con riesgo controlado. Puedes acertar poco y aun así ser rentable si gestionas bien.</div>
       <div class="faq-item"><strong>¿Por qué a veces no se ejecuta una operación?</strong><br/>Por liquidez/spread/fill. Por eso medimos NoFill y fill-rate.</div>
@@ -751,6 +828,7 @@
             <tr><td>Edge ejecutable</td><td>Ventaja real tras costes y fill.</td><td>Es el número que importa para operar.</td></tr>
             <tr><td>EXEC</td><td>Trade que sí se ejecutó en simulación.</td><td>Cuenta para stake, PnL y hit-rate.</td></tr>
             <tr><td>Expected PnL</td><td>Ganancia esperada por modelo.</td><td>Referencia teórica para comparar.</td></tr>
+            <tr><td>FLASH</td><td>Alerta visual temporal de oportunidad fuerte y ejecutable.</td><td>Prioriza revisión en DETALLE antes de actuar.</td></tr>
             <tr><td>Fill</td><td>Probabilidad de ejecución.</td><td>Fill 30% = muchas órdenes podrían no entrar.</td></tr>
             <tr><td>Fill-rate</td><td>% de simulados que se ejecutan.</td><td>Exec 30 / Simul 50 = 60% fill-rate.</td></tr>
             <tr><td>Gap ejecución</td><td>Realized - Expected.</td><td>Si es negativo repetido, hay problema de ejecución.</td></tr>
@@ -765,12 +843,14 @@
             <tr><td>Paper Trading</td><td>Simulación sin dinero real.</td><td>Entrenar antes de operar de verdad.</td></tr>
             <tr><td>PnL</td><td>Ganancia/pérdida.</td><td>+0.15u ganó; -0.10u perdió.</td></tr>
             <tr><td>PolyTEMP</td><td>Consenso de máximas de varios modelos.</td><td>Base central para probabilidades.</td></tr>
+            <tr><td>PolyTemp PREMIUM</td><td>Estimación con aprendizaje diario por ciudad y ranking vivo de modelos.</td><td>Debe mejorar gradualmente la precisión local frente al PolyTEMP base.</td></tr>
             <tr><td>Probabilidad implícita</td><td>Probabilidad que “dice” el precio.</td><td>Precio 0.42 ≈ 42%.</td></tr>
             <tr><td>Realized PnL</td><td>Resultado real obtenido.</td><td>Puede ser menor al esperado por ejecución.</td></tr>
             <tr><td>RANGE</td><td>Tesis de intervalo.</td><td>“Entre 8 y 10°C”.</td></tr>
             <tr><td>ROI</td><td>Rentabilidad sobre stake.</td><td>PnL 1.0 con stake 10 = 10% ROI.</td></tr>
             <tr><td>Spread</td><td>Diferencia entre mejor compra y mejor venta.</td><td>Spread alto = entrada más cara.</td></tr>
             <tr><td>Stake</td><td>Coste de abrir posición.</td><td>Si compras a 0.36, stake es 0.36 por unidad.</td></tr>
+            <tr><td>Ticker dinámico</td><td>Línea horizontal móvil con resumen de oportunidades y estado de fuentes.</td><td>Sirve para priorizar ciudades sin abrir detalle de todas.</td></tr>
             <tr><td>UNDER</td><td>Tesis de máxima por debajo del umbral.</td><td>Comprar NO en umbral alto puede equivaler a tesis UNDER.</td></tr>
             <tr><td>OVER</td><td>Tesis de máxima por encima del umbral.</td><td>Útil en días de calentamiento sostenido.</td></tr>
             <tr><td>YES/NO</td><td>Lado del contrato comprado.</td><td>YES apuesta a que condición se cumple; NO a que no.</td></tr>
@@ -792,7 +872,7 @@
     </section>
 
     <p class="version">
-      Manual v2.0 • Última actualización: 19-02-2026 • Feedback: <a href="mailto:digitalclaw8@gmail.com" style="color:#8fc8ff">digitalclaw8@gmail.com</a>
+      Manual v2.1 • Última actualización: 19-02-2026 • Feedback: <a href="mailto:digitalclaw8@gmail.com" style="color:#8fc8ff">digitalclaw8@gmail.com</a>
     </p>
   </div>
 </body>
