@@ -138,41 +138,10 @@ fun CityDetailScreen(
             }
             val observationDateTime = cityData.metar.current?.observedAt
                 ?.formatInZone(cityData.city.zoneId, "dd-MM-yyyy HH:mm")
-            val metarActualValue = appendObservationTime(
-                temperature = formatTemperature(cityData.metarCurrentInUnit(), unit),
-                observationDateTime = observationDateTime
-            )
-            val metarPreviousValue = appendMetarElapsedHours(
-                temperature = formatTemperature(cityData.metarPreviousInUnit(), unit),
-                currentObservedAt = cityData.metar.current?.observedAt,
-                previousObservedAt = cityData.metar.previousSameDay?.observedAt
-            )
             val controlWithSecondaryUnit = formatTemperatureWithAlternateUnit(
                 valueInDisplayUnit = cityData.controlTempInUnit(),
                 displayUnit = unit
             )
-            val polyWithSecondaryUnit = formatTemperatureWithAlternateUnit(
-                valueInDisplayUnit = cityData.polyTempInUnit(),
-                displayUnit = unit
-            )
-            val polyPremiumWithSecondaryUnit = formatTemperatureWithAlternateUnit(
-                valueInDisplayUnit = cityData.polyTempPremiumInUnit(),
-                displayUnit = unit
-            )
-            val observedMaxInDisplayUnit = cityData.observedMaxInUnit()
-            val polyTempInvalid = cityData.polyTempInvalid
-            val polyTempPremiumInvalid = cityData.polyTempPremiumInvalid
-            val polyDisplayColor = if (polyTempInvalid) Negative else Positive
-            val polyPremiumDisplayColor = if (polyTempPremiumInvalid) Negative else Positive
-            val polyDisplayValue = appendForecastInvalidSuffix(
-                temperature = polyWithSecondaryUnit,
-                invalid = polyTempInvalid
-            )
-            val polyPremiumDisplayValue = appendForecastInvalidSuffix(
-                temperature = polyPremiumWithSecondaryUnit,
-                invalid = polyTempPremiumInvalid
-            )
-            val observedMaxLabel = formatTemperature(observedMaxInDisplayUnit, unit)
             val tafIssuedAt = cityData.taf.issuedAt.formatInZone(cityData.city.zoneId, "dd-MM-yyyy HH:mm")
             val tafValidity = formatTafValidityWindow(
                 from = cityData.taf.validFrom,
@@ -188,6 +157,61 @@ fun CityDetailScreen(
             )
             var selectedDayIndex by rememberSaveable(cityData.city.id) { mutableStateOf(0) }
             val selectedTab = dayTabs.getOrElse(selectedDayIndex) { dayTabs.first() }
+            val isTodayTab = selectedTab.date == cityToday
+            val selectedHorizon = cityData.horizons.firstOrNull { horizon ->
+                horizon.targetDate == selectedTab.date
+            } ?: cityData.horizons.firstOrNull()
+            val selectedForecasts = selectedHorizon?.forecasts ?: cityData.forecasts
+            val selectedPolyInUnit = if (unit == TempUnit.C) selectedHorizon?.polyTempC else selectedHorizon?.polyTempF
+            val selectedPolyPremiumInUnit = if (unit == TempUnit.C) {
+                selectedHorizon?.polyTempPremiumC
+            } else {
+                selectedHorizon?.polyTempPremiumF
+            }
+            val polyWithSecondaryUnit = formatTemperatureWithAlternateUnit(
+                valueInDisplayUnit = selectedPolyInUnit,
+                displayUnit = unit
+            )
+            val polyPremiumWithSecondaryUnit = formatTemperatureWithAlternateUnit(
+                valueInDisplayUnit = selectedPolyPremiumInUnit,
+                displayUnit = unit
+            )
+            val observedMaxInDisplayUnit = cityData.observedMaxInUnit()
+            val polyTempInvalid = selectedHorizon?.polyTempInvalid == true
+            val polyTempPremiumInvalid = selectedHorizon?.polyTempPremiumInvalid == true
+            val polyDisplayColor = if (polyTempInvalid) Negative else Positive
+            val polyPremiumDisplayColor = if (polyTempPremiumInvalid) Negative else Positive
+            val polyDisplayValue = appendForecastInvalidSuffix(
+                temperature = polyWithSecondaryUnit,
+                invalid = polyTempInvalid
+            )
+            val polyPremiumDisplayValue = appendForecastInvalidSuffix(
+                temperature = polyPremiumWithSecondaryUnit,
+                invalid = polyTempPremiumInvalid
+            )
+            val observedMaxLabel = formatTemperature(observedMaxInDisplayUnit, unit)
+            val metarActualValue = if (isTodayTab) {
+                appendObservationTime(
+                    temperature = formatTemperature(cityData.metarCurrentInUnit(), unit),
+                    observationDateTime = observationDateTime
+                )
+            } else {
+                "SIN METAR"
+            }
+            val metarPreviousValue = if (isTodayTab) {
+                appendMetarElapsedHours(
+                    temperature = formatTemperature(cityData.metarPreviousInUnit(), unit),
+                    currentObservedAt = cityData.metar.current?.observedAt,
+                    previousObservedAt = cityData.metar.previousSameDay?.observedAt
+                )
+            } else {
+                "SIN METAR"
+            }
+            val metarDeltaValue = if (isTodayTab) {
+                formatDelta(cityData.metarDeltaInUnit(), unit)
+            } else {
+                "SIN METAR"
+            }
             val selectedCandidates = cityData.polymarket.opportunities
                 .filter { opportunity ->
                     val targetDate = opportunity.condition.targetDate
@@ -226,7 +250,7 @@ fun CityDetailScreen(
                         DetailPair("Hora local", cityData.localTime)
                         DetailPair("METAR actual", metarActualValue)
                         DetailPair("METAR anterior", metarPreviousValue)
-                        DetailPair("Diferencia", formatDelta(cityData.metarDeltaInUnit(), unit))
+                        DetailPair("Diferencia", metarDeltaValue)
                         DetailPair("Temp estación control", controlWithSecondaryUnit)
                         DetailPair(
                             label = "PolyTEMP",
@@ -287,7 +311,7 @@ fun CityDetailScreen(
                             url = cityData.controlStation.sourceUrl,
                             onOpenUrl = openExternalUrl
                         )
-                        if (!cityData.metar.current?.rawText.isNullOrBlank()) {
+                        if (isTodayTab && !cityData.metar.current?.rawText.isNullOrBlank()) {
                             Text(
                                 text = cityData.metar.current?.rawText.orEmpty(),
                                 style = MaterialTheme.typography.bodyMedium,
@@ -314,7 +338,7 @@ fun CityDetailScreen(
                     ForecastHeader()
                 }
 
-                items(cityData.forecasts, key = { it.sourceId }) { forecast ->
+                items(selectedForecasts, key = { it.sourceId }) { forecast ->
                     ForecastRow(
                         forecast = forecast,
                         cityData = cityData

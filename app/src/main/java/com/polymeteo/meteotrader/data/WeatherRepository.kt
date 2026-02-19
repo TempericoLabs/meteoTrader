@@ -14,6 +14,7 @@ import com.polymeteo.meteotrader.data.model.BacktestReport
 import com.polymeteo.meteotrader.data.model.CityConfig
 import com.polymeteo.meteotrader.data.model.CityWeatherData
 import com.polymeteo.meteotrader.data.model.ControlStationSnapshot
+import com.polymeteo.meteotrader.data.model.ForecastHorizonData
 import com.polymeteo.meteotrader.data.model.ForecastSourceResult
 import com.polymeteo.meteotrader.data.model.MarketConditionType
 import com.polymeteo.meteotrader.data.model.MarketRangeCondition
@@ -29,6 +30,7 @@ import com.polymeteo.meteotrader.data.premium.PremiumWeightSnapshot
 import com.polymeteo.meteotrader.data.source.HttpClient
 import com.polymeteo.meteotrader.data.source.MetarSource
 import com.polymeteo.meteotrader.data.source.PolymarketSource
+import com.polymeteo.meteotrader.data.source.PolymarketSource.ModelInput
 import com.polymeteo.meteotrader.data.source.TafSource
 import com.polymeteo.meteotrader.data.source.WundergroundSource
 import com.polymeteo.meteotrader.util.celsiusToFahrenheit
@@ -45,6 +47,7 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.truncate
 
 class WeatherRepository(
     private val metarSource: MetarSource,
@@ -102,68 +105,111 @@ class WeatherRepository(
 
     suspend fun fetchCity(city: CityConfig): CityWeatherData = coroutineScope {
         val zoneId = ZoneId.of(city.zoneId)
-        val targetDate = LocalDate.now(zoneId)
+        val cityToday = LocalDate.now(zoneId)
+        val targetDates = listOf(cityToday, cityToday.plusDays(1), cityToday.plusDays(2))
 
         val metarDeferred = async { fetchMetarWithTimeout(city) }
         val tafDeferred = async { fetchTafWithTimeout(city) }
         val controlDeferred = async { fetchControlWithTimeout(city) }
-        val forecastsDeferred = forecastProviders.map { provider ->
-            async { fetchForecastWithTimeout(provider, city, targetDate) }
+        val forecastsDeferredByDate = targetDates.associateWith { targetDate ->
+            forecastProviders.map { provider ->
+                async { fetchForecastWithTimeout(provider, city, targetDate) }
+            }
         }
 
         val metar = metarDeferred.await()
         val taf = tafDeferred.await()
         val control = controlDeferred.await()
-        val forecasts = forecastsDeferred.awaitAll()
-
-        val polyTempBaseComputation = computePolyTemp(
-            forecasts = forecasts,
-            dynamicWeights = emptyMap()
-        )
-        val premiumWeights = fetchPremiumWeightsWithTimeout(
-            city = city,
-            targetDate = targetDate,
-            forecasts = forecasts
-        )
-        val polyTempPremiumComputation = computePolyTemp(
-            forecasts = forecasts,
-            dynamicWeights = premiumWeights.weightsByProviderId
-        )
+        val forecastsByDate = targetDates.associateWith { targetDate ->
+            forecastsDeferredByDate[targetDate]?.awaitAll().orEmpty()
+        }
         val observedMaxC = resolveObservedMaxC(metar, control)
-        val polyTempC = polyTempBaseComputation.polyTempC
-        val polyTempPremiumC = polyTempPremiumComputation.polyTempC ?: polyTempBaseComputation.polyTempC
-        val polyTempInvalid = isForecastInvalidForToday(
-            forecastTempC = polyTempC,
-            observedMaxC = observedMaxC
-        )
-        val polyTempPremiumInvalid = isForecastInvalidForToday(
-            forecastTempC = polyTempPremiumC,
-            observedMaxC = observedMaxC
-        )
 
-        val polymarketPolyTempC = normalizePolyTempForLiveFloor(
-            preferredForecastC = polyTempPremiumC ?: polyTempC,
-            observedMaxC = observedMaxC
-        )
-        val polymarketForecastDailyMaxC = if (polyTempPremiumComputation.validMaxTempsC.isNotEmpty()) {
-            polyTempPremiumComputation.validMaxTempsC
-        } else {
-            polyTempBaseComputation.validMaxTempsC
-        }.let { forecastTemps ->
-            normalizeForecastInputsForLiveFloor(
-                forecastTemps = forecastTemps,
+        val baseComputationByDate = mutableMapOf<LocalDate, PolyTempComputation>()
+        val premiumComputationByDate = mutableMapOf<LocalDate, PolyTempComputation>()
+        val premiumWeightsByDate = mutableMapOf<LocalDate, PremiumWeightSnapshot>()
+        val horizonData = mutableListOf<ForecastHorizonData>()
+
+        targetDates.forEach { targetDate ->
+            val forecasts = forecastsByDate[targetDate].orEmpty()
+            val baseComputation = computePolyTemp(
+                forecasts = forecasts,
+                dynamicWeights = emptyMap()
+            )
+            val premiumWeights = fetchPremiumWeightsWithTimeout(
+                city = city,
+                targetDate = targetDate,
+                forecasts = forecasts
+            )
+            val premiumComputation = computePolyTemp(
+                forecasts = forecasts,
+                dynamicWeights = premiumWeights.weightsByProviderId
+            )
+            val isToday = targetDate == cityToday
+            val polyTempC = baseComputation.polyTempC
+            val polyTempPremiumC = premiumComputation.polyTempC ?: baseComputation.polyTempC
+            val polyTempInvalid = isToday && isForecastInvalidForToday(
+                forecastTempC = polyTempC,
                 observedMaxC = observedMaxC
             )
+            val polyTempPremiumInvalid = isToday && isForecastInvalidForToday(
+                forecastTempC = polyTempPremiumC,
+                observedMaxC = observedMaxC
+            )
+
+            baseComputationByDate[targetDate] = baseComputation
+            premiumComputationByDate[targetDate] = premiumComputation
+            premiumWeightsByDate[targetDate] = premiumWeights
+            horizonData += ForecastHorizonData(
+                targetDate = targetDate,
+                forecasts = forecasts,
+                polyTempC = polyTempC,
+                polyTempF = polyTempC?.let(::celsiusToFahrenheit),
+                polyTempInvalid = polyTempInvalid,
+                polyTempPremiumC = polyTempPremiumC,
+                polyTempPremiumF = polyTempPremiumC?.let(::celsiusToFahrenheit),
+                polyTempPremiumInvalid = polyTempPremiumInvalid
+            )
         }
+
+        val todayHorizon = horizonData.first { it.targetDate == cityToday }
+        val modelInputsByDate = targetDates.associateWith { targetDate ->
+            val horizon = horizonData.first { it.targetDate == targetDate }
+            val baseComputation = baseComputationByDate[targetDate] ?: PolyTempComputation(null, emptyList(), emptyList())
+            val premiumComputation = premiumComputationByDate[targetDate] ?: PolyTempComputation(null, emptyList(), emptyList())
+            val rawPolyTempC = horizon.polyTempPremiumC ?: horizon.polyTempC
+            val rawForecastMaxTempsC = if (premiumComputation.validMaxTempsC.isNotEmpty()) {
+                premiumComputation.validMaxTempsC
+            } else {
+                baseComputation.validMaxTempsC
+            }
+            if (targetDate == cityToday) {
+                ModelInput(
+                    polyTempC = normalizePolyTempForLiveFloor(
+                        preferredForecastC = rawPolyTempC,
+                        observedMaxC = observedMaxC
+                    ),
+                    forecastDailyMaxC = normalizeForecastInputsForLiveFloor(
+                        forecastTemps = rawForecastMaxTempsC,
+                        observedMaxC = observedMaxC
+                    )
+                )
+            } else {
+                ModelInput(
+                    polyTempC = rawPolyTempC,
+                    forecastDailyMaxC = rawForecastMaxTempsC
+                )
+            }
+        }
+
         val rawPolymarket = fetchPolymarketWithTimeout(
             city = city,
-            polyTempC = polymarketPolyTempC,
-            forecastDailyMaxC = polymarketForecastDailyMaxC
+            modelInputsByDate = modelInputsByDate
         )
         val polymarket = filterImpossibleLiveMarkets(
             snapshot = rawPolymarket,
             observedMaxC = observedMaxC,
-            cityToday = targetDate
+            cityToday = cityToday
         )
 
         val warnings = buildList {
@@ -171,21 +217,28 @@ class WeatherRepository(
             taf.error?.let { add("TAF: $it") }
             control.error?.let { add("Wunderground: $it") }
             polymarket.error?.let { add("Polymarket: $it") }
-            if (polyTempInvalid && observedMaxC != null) {
+            if (todayHorizon.polyTempInvalid && observedMaxC != null) {
                 add("PolyTEMP: invalido hoy (max observada ${String.format(Locale.US, "%.1f", observedMaxC)}°C)")
             }
-            if (polyTempPremiumInvalid && observedMaxC != null) {
+            if (todayHorizon.polyTempPremiumInvalid && observedMaxC != null) {
                 add("PolyTEMP PREMIUM: invalido hoy (max observada ${String.format(Locale.US, "%.1f", observedMaxC)}°C)")
             }
-            forecasts.filter { it.status == SourceStatus.ERROR }.forEach { result ->
-                result.error?.let { add("${result.sourceName}: $it") }
+            targetDates.forEach { targetDate ->
+                val label = horizonLabel(targetDate, cityToday)
+                val forecasts = forecastsByDate[targetDate].orEmpty()
+                forecasts.filter { it.status == SourceStatus.ERROR }.forEach { result ->
+                    result.error?.let { add("$label ${result.sourceName}: $it") }
+                }
+                val baseWarnings = baseComputationByDate[targetDate]?.warnings.orEmpty()
+                val premiumWarnings = premiumComputationByDate[targetDate]
+                    ?.warnings
+                    ?.map { warning -> warning.replace("PolyTEMP", "PolyTEMP PREMIUM") }
+                    .orEmpty()
+                val premiumWeightWarnings = premiumWeightsByDate[targetDate]?.warnings.orEmpty()
+                baseWarnings.forEach { warning -> add("$label $warning") }
+                premiumWarnings.forEach { warning -> add("$label $warning") }
+                premiumWeightWarnings.forEach { warning -> add("$label $warning") }
             }
-            addAll(polyTempBaseComputation.warnings)
-            addAll(
-                polyTempPremiumComputation.warnings
-                    .map { warning -> warning.replace("PolyTEMP", "PolyTEMP PREMIUM") }
-            )
-            addAll(premiumWeights.warnings)
         }
 
         CityWeatherData(
@@ -194,15 +247,15 @@ class WeatherRepository(
             metar = metar,
             taf = taf,
             controlStation = control,
-            forecasts = forecasts,
+            horizons = horizonData.sortedBy { it.targetDate },
+            forecasts = todayHorizon.forecasts,
             observedMaxC = observedMaxC,
-            polyTempC = polyTempC,
-            polyTempF = polyTempC?.let(::celsiusToFahrenheit),
-            polyTempInvalid = polyTempInvalid,
-            polyTempPremiumC = polyTempPremiumC,
-            polyTempPremiumF = polyTempPremiumC
-                ?.let(::celsiusToFahrenheit),
-            polyTempPremiumInvalid = polyTempPremiumInvalid,
+            polyTempC = todayHorizon.polyTempC,
+            polyTempF = todayHorizon.polyTempF,
+            polyTempInvalid = todayHorizon.polyTempInvalid,
+            polyTempPremiumC = todayHorizon.polyTempPremiumC,
+            polyTempPremiumF = todayHorizon.polyTempPremiumF,
+            polyTempPremiumInvalid = todayHorizon.polyTempPremiumInvalid,
             polymarket = polymarket,
             updatedAt = Instant.now(),
             warnings = warnings
@@ -273,14 +326,12 @@ class WeatherRepository(
 
     private suspend fun fetchPolymarketWithTimeout(
         city: CityConfig,
-        polyTempC: Double?,
-        forecastDailyMaxC: List<Double>
+        modelInputsByDate: Map<LocalDate, ModelInput>
     ): PolymarketSnapshot {
         return withTimeoutOrNull(POLYMARKET_TIMEOUT_MS) {
             polymarketSource.fetch(
                 city = city,
-                polyTempC = polyTempC,
-                forecastDailyMaxC = forecastDailyMaxC
+                modelInputsByDate = modelInputsByDate
             )
         } ?: PolymarketSnapshot(
             query = "highest temperature in ${city.name}",
@@ -290,6 +341,15 @@ class WeatherRepository(
             topOpportunity = null,
             error = "Timeout Polymarket"
         )
+    }
+
+    private fun horizonLabel(targetDate: LocalDate, cityToday: LocalDate): String {
+        return when (targetDate) {
+            cityToday -> "Hoy:"
+            cityToday.plusDays(1) -> "Mañana:"
+            cityToday.plusDays(2) -> "Pasado:"
+            else -> "${targetDate}:"
+        }
     }
 
     private fun resolveObservedMaxC(
@@ -366,19 +426,19 @@ class WeatherRepository(
         condition: MarketRangeCondition,
         observedMaxC: Double
     ): Boolean {
-        val observed = if (condition.unit == TempUnit.C) {
+        val observedInConditionUnit = if (condition.unit == TempUnit.C) {
             observedMaxC
         } else {
             celsiusToFahrenheit(observedMaxC)
         }
+        // Polymarket resuelve a grados enteros truncados (sin decimales).
+        val truncatedObservedDegree = truncate(observedInConditionUnit)
         return when (condition.type) {
-            MarketConditionType.GREATER_OR_EQUAL -> true
-            MarketConditionType.LESS_OR_EQUAL -> observed <= condition.threshold + FORECAST_INVALID_EPSILON_C
-            MarketConditionType.EXACT -> observed < (condition.threshold + LIVE_BUCKET_HALF_WIDTH - FORECAST_INVALID_EPSILON_C)
-            MarketConditionType.BETWEEN -> {
-                val upper = condition.upperThreshold ?: condition.threshold
-                observed < (upper + LIVE_BUCKET_HALF_WIDTH - FORECAST_INVALID_EPSILON_C)
-            }
+            MarketConditionType.GREATER_OR_EQUAL -> condition.threshold + FORECAST_INVALID_EPSILON_C >= truncatedObservedDegree
+            MarketConditionType.LESS_OR_EQUAL -> condition.threshold + FORECAST_INVALID_EPSILON_C >= truncatedObservedDegree
+            MarketConditionType.EXACT -> condition.threshold + FORECAST_INVALID_EPSILON_C >= truncatedObservedDegree
+            MarketConditionType.BETWEEN -> (condition.upperThreshold ?: condition.threshold) +
+                FORECAST_INVALID_EPSILON_C >= truncatedObservedDegree
         }
     }
 
@@ -510,7 +570,6 @@ class WeatherRepository(
         private const val POLYMARKET_TIMEOUT_MS = 6_000L
         private const val PREMIUM_TIMEOUT_MS = 5_000L
         private const val MIN_FORECASTS_FOR_HIGH_CONFIDENCE = 3
-        private const val LIVE_BUCKET_HALF_WIDTH = 0.5
         private const val FORECAST_INVALID_EPSILON_C = 0.001
         private val VALID_TEMP_RANGE_C = -80.0..65.0
 

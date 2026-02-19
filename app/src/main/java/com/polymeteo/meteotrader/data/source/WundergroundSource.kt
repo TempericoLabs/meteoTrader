@@ -111,20 +111,35 @@ class WundergroundSource(
             document.select("script").forEach { append(it.data()) }
         }
         val pageText = document.text()
+        val summaryCandidate = findSummaryHighTempActual(pageText, preferredUnit = city.displayUnit)
+        val currentCandidate = findEmbeddedObservationHighTemp(scriptsJoined, city, key = "temperatureMaxSince7Am")
+            ?: findEmbeddedObservationHighTemp(scriptsJoined, city, key = "temperatureMax24Hour")
+            ?: findHighTempAfterKeyword(pageText, preferredUnit = city.displayUnit)
+            ?: findAnyEmbeddedMaxTemperature(scriptsJoined, preferredUnit = city.displayUnit)
+            ?: fetchObservationMaxFromApi(html = html, city = city)
+            ?: findAnyEmbeddedCurrentTemperature(scriptsJoined, preferredUnit = city.displayUnit)
 
-        findSummaryHighTempActual(pageText, preferredUnit = city.displayUnit)?.let { return it }
-        findEmbeddedObservationHighTemp(scriptsJoined, city, key = "temperatureMaxSince7Am")?.let { return it }
-        findEmbeddedObservationHighTemp(scriptsJoined, city, key = "temperatureMax24Hour")?.let { return it }
-        findHighTempAfterKeyword(pageText, preferredUnit = city.displayUnit)?.let { return it }
-        findAnyEmbeddedMaxTemperature(scriptsJoined, preferredUnit = city.displayUnit)?.let { return it }
-        fetchObservationMaxFromApi(html = html, city = city)?.let { return it }
-        return findAnyEmbeddedCurrentTemperature(scriptsJoined, preferredUnit = city.displayUnit)
+        return pickHigherTemperature(summaryCandidate, currentCandidate)
     }
 
     private fun findSummaryHighTempActual(
         pageText: String,
         preferredUnit: TempUnit
     ): Pair<Double, TempUnit>? {
+        val normalized = pageText.replace(Regex("\\s+"), " ").trim()
+        val normalizedSummaryRegex = Regex(
+            "Temperature\\s*\\(\\s*(?:°|º)?\\s*([CF])\\s*\\)\\s*Actual\\s*Historic\\s*Avg\\s*High\\s*Temp\\s*(-?\\d+(?:\\.\\d+)?)",
+            RegexOption.IGNORE_CASE
+        )
+        normalizedSummaryRegex.find(normalized)?.let { match ->
+            val value = match.groupValues.getOrNull(2)?.toDoubleOrNull() ?: return@let
+            val unit = when (match.groupValues.getOrNull(1)?.uppercase()) {
+                "F" -> TempUnit.F
+                else -> TempUnit.C
+            }
+            if (isPlausible(value, unit)) return value to unit
+        }
+
         val unitMatch = Regex(
             "Temperature\\s*\\(\\s*(?:°|º)?\\s*([CF])\\s*\\)",
             RegexOption.IGNORE_CASE
@@ -159,6 +174,17 @@ class WundergroundSource(
         val unit = headerUnit ?: inferUnitFromValue(firstNumber, preferredUnit)
         if (!isPlausible(firstNumber, unit)) return null
         return firstNumber to unit
+    }
+
+    private fun pickHigherTemperature(
+        first: Pair<Double, TempUnit>?,
+        second: Pair<Double, TempUnit>?
+    ): Pair<Double, TempUnit>? {
+        if (first == null) return second
+        if (second == null) return first
+        val firstC = if (first.second == TempUnit.C) first.first else fahrenheitToCelsius(first.first)
+        val secondC = if (second.second == TempUnit.C) second.first else fahrenheitToCelsius(second.first)
+        return if (firstC >= secondC) first else second
     }
 
     private fun findEmbeddedObservationHighTemp(

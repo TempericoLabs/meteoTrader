@@ -87,6 +87,17 @@ data class ForecastSourceResult(
     val error: String?
 )
 
+data class ForecastHorizonData(
+    val targetDate: LocalDate,
+    val forecasts: List<ForecastSourceResult>,
+    val polyTempC: Double?,
+    val polyTempF: Double?,
+    val polyTempInvalid: Boolean,
+    val polyTempPremiumC: Double?,
+    val polyTempPremiumF: Double?,
+    val polyTempPremiumInvalid: Boolean
+)
+
 data class MarketRangeCondition(
     val type: MarketConditionType,
     val threshold: Double,
@@ -135,6 +146,7 @@ data class CityWeatherData(
     val metar: MetarSnapshot,
     val taf: TafSnapshot,
     val controlStation: ControlStationSnapshot,
+    val horizons: List<ForecastHorizonData>,
     val forecasts: List<ForecastSourceResult>,
     val observedMaxC: Double?,
     val polyTempC: Double?,

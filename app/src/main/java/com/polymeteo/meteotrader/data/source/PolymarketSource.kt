@@ -19,7 +19,6 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
-import java.text.Normalizer
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -37,6 +36,11 @@ class PolymarketSource(
     private val json: Json = Json { ignoreUnknownKeys = true }
 ) {
 
+    data class ModelInput(
+        val polyTempC: Double?,
+        val forecastDailyMaxC: List<Double>
+    )
+
     data class HistoricalMarketCandidate(
         val marketId: String,
         val question: String,
@@ -48,28 +52,22 @@ class PolymarketSource(
 
     suspend fun fetch(
         city: CityConfig,
-        polyTempC: Double?,
-        forecastDailyMaxC: List<Double>
+        modelInputsByDate: Map<LocalDate, ModelInput>
     ): PolymarketSnapshot {
         val zoneId = ZoneId.of(city.zoneId)
         val cityNow = Instant.now().atZone(zoneId)
         val today = cityNow.toLocalDate()
         val localHour = cityNow.hour
         val targetDates = listOf(today, today.plusDays(1), today.plusDays(2))
-
-        if (polyTempC == null) {
-            return PolymarketSnapshot(
-                query = buildQuery(city),
-                fetchedAt = Instant.now(),
-                marketsScanned = 0,
-                opportunities = emptyList(),
-                topOpportunity = null,
-                error = "PolyTEMP no disponible"
-            )
+        val directSlugCandidatesByDate = targetDates.associateWith { date ->
+            PolymarketCityHeuristics.buildEventSlugCandidates(city, date)
         }
 
-        val directSlugs = targetDates.map { date -> buildEventSlug(city.name, date) }
-        val directMarketsResult = fetchDirectEventMarkets(city, targetDates, directSlugs)
+        val directMarketsResult = fetchDirectEventMarkets(
+            city = city,
+            targetDates = targetDates,
+            slugCandidatesByDate = directSlugCandidatesByDate
+        )
 
         val parsedMarkets = if (directMarketsResult.markets.isNotEmpty()) {
             directMarketsResult.markets
@@ -78,14 +76,16 @@ class PolymarketSource(
         }
 
         if (parsedMarkets.isEmpty()) {
-            val tried = directSlugs.joinToString(", ")
+            val tried = directSlugCandidatesByDate.entries.joinToString(" | ") { (date, slugs) ->
+                "$date: ${slugs.joinToString(", ")}"
+            }
             val errorParts = mutableListOf<String>()
             if (directMarketsResult.errors.isNotEmpty()) {
                 errorParts += directMarketsResult.errors.joinToString(" | ")
             }
             errorParts += "Sin mercados abiertos por slug ($tried)"
             return PolymarketSnapshot(
-                query = buildQuery(city),
+                query = buildPrimaryQuery(city),
                 fetchedAt = Instant.now(),
                 marketsScanned = 0,
                 opportunities = emptyList(),
@@ -95,9 +95,13 @@ class PolymarketSource(
         }
 
         val marketWindow = parsedMarkets.filterByTargetDates(targetDates.toSet())
-        val sigmaC = estimateSigmaC(forecastDailyMaxC)
         val opportunities = marketWindow
-            .map { market ->
+            .mapNotNull { market ->
+                val marketDate = market.condition.targetDate ?: today
+                val dayInput = modelInputsByDate[marketDate]
+                    ?: modelInputsByDate[today]
+                val polyTempC = dayInput?.polyTempC ?: return@mapNotNull null
+                val sigmaC = estimateSigmaC(dayInput.forecastDailyMaxC)
                 evaluateOpportunity(
                     market = market,
                     polyTempC = polyTempC,
@@ -114,12 +118,12 @@ class PolymarketSource(
             .maxByOrNull { it.executableEdge }
 
         return PolymarketSnapshot(
-            query = buildQuery(city),
+            query = buildPrimaryQuery(city),
             fetchedAt = Instant.now(),
             marketsScanned = parsedMarkets.size,
             opportunities = opportunities,
             topOpportunity = topToday ?: opportunities.firstOrNull(),
-            error = null
+            error = if (opportunities.isEmpty()) "PolyTEMP no disponible para los mercados activos" else null
         )
     }
 
@@ -127,68 +131,90 @@ class PolymarketSource(
         city: CityConfig,
         targetDate: LocalDate
     ): List<HistoricalMarketCandidate> {
-        val slug = buildEventSlug(city.name, targetDate)
-        val url = "https://gamma-api.polymarket.com/events?slug=$slug"
-
-        return runCatching {
-            val response = httpClient.get(
-                url,
-                headers = mapOf(
-                    "User-Agent" to "PolyMeteo/0.1",
-                    "Accept" to "application/json"
-                ),
-                retries = 2
+        val slugs = PolymarketCityHeuristics.buildEventSlugCandidates(city, targetDate)
+        val collected = mutableListOf<ParsedMarket>()
+        for (slug in slugs.distinct()) {
+            val result = fetchDirectEventMarketsForSlug(
+                city = city,
+                date = targetDate,
+                slug = slug,
+                allowClosed = true
             )
-            if (response.code !in 200..299) return emptyList()
-            val root = json.parseToJsonElement(response.body) as? JsonArray ?: return emptyList()
-            val event = root.firstOrNull() as? JsonObject ?: return emptyList()
-            val eventMarkets = event["markets"] as? JsonArray ?: return emptyList()
-
-            eventMarkets
-                .mapNotNull { it as? JsonObject }
-                .mapNotNull { parseMarket(it, city, allowClosed = true) }
-                .filter { market ->
-                    market.condition.targetDate == null || market.condition.targetDate == targetDate
-                }
-                .mapNotNull { market ->
-                    val yesTokenId = market.yesTokenId ?: return@mapNotNull null
-                    HistoricalMarketCandidate(
-                        marketId = market.id,
-                        question = market.question,
-                        condition = market.condition,
-                        yesTokenId = yesTokenId,
-                        liquidity = market.liquidity,
-                        spread = market.spread
-                    )
-                }
-        }.getOrDefault(emptyList())
+            collected += result.markets
+        }
+        return collected
+            .distinctBy { market -> market.id }
+            .filter { market ->
+                market.condition.targetDate == null || market.condition.targetDate == targetDate
+            }
+            .mapNotNull { market ->
+                val yesTokenId = market.yesTokenId ?: return@mapNotNull null
+                HistoricalMarketCandidate(
+                    marketId = market.id,
+                    question = market.question,
+                    condition = market.condition,
+                    yesTokenId = yesTokenId,
+                    liquidity = market.liquidity,
+                    spread = market.spread
+                )
+            }
     }
 
     private suspend fun fetchDirectEventMarkets(
         city: CityConfig,
         targetDates: List<LocalDate>,
-        slugs: List<String>
+        slugCandidatesByDate: Map<LocalDate, List<String>>
     ): DirectMarketsResult = coroutineScope {
-        val perSlug = targetDates.zip(slugs).map { (date, slug) ->
+        val perDate = targetDates.map { date ->
             async {
-                fetchDirectEventMarketsForSlug(
+                fetchDirectEventMarketsForDate(
                     city = city,
                     date = date,
-                    slug = slug
+                    slugs = slugCandidatesByDate[date].orEmpty()
                 )
             }
         }.awaitAll()
 
         DirectMarketsResult(
-            markets = perSlug.flatMap { it.markets },
-            errors = perSlug.flatMap { it.errors }
+            markets = perDate
+                .flatMap { it.markets }
+                .distinctBy { market -> market.id },
+            errors = perDate.flatMap { it.errors }
+        )
+    }
+
+    private suspend fun fetchDirectEventMarketsForDate(
+        city: CityConfig,
+        date: LocalDate,
+        slugs: List<String>
+    ): DirectMarketsResult {
+        val errors = mutableListOf<String>()
+        val uniqueSlugs = slugs.distinct()
+        for (slug in uniqueSlugs) {
+            val result = fetchDirectEventMarketsForSlug(
+                city = city,
+                date = date,
+                slug = slug
+            )
+            if (result.markets.isNotEmpty()) {
+                return DirectMarketsResult(
+                    markets = result.markets,
+                    errors = emptyList()
+                )
+            }
+            errors += result.errors
+        }
+        return DirectMarketsResult(
+            markets = emptyList(),
+            errors = errors
         )
     }
 
     private suspend fun fetchDirectEventMarketsForSlug(
         city: CityConfig,
         date: LocalDate,
-        slug: String
+        slug: String,
+        allowClosed: Boolean = false
     ): DirectMarketsResult {
         val url = "https://gamma-api.polymarket.com/events?slug=$slug"
         return runCatching {
@@ -226,7 +252,7 @@ class PolymarketSource(
 
             val markets = eventMarkets
                 .mapNotNull { it as? JsonObject }
-                .mapNotNull { parseMarket(it, city) }
+                .mapNotNull { parseMarket(it, city, allowClosed = allowClosed) }
                 .filter { market ->
                     market.condition.targetDate == null || market.condition.targetDate == date
                 }
@@ -240,8 +266,22 @@ class PolymarketSource(
         }
     }
 
-    private suspend fun fetchFallbackSearchMarkets(city: CityConfig): List<ParsedMarket> {
-        val query = URLEncoder.encode(buildQuery(city), StandardCharsets.UTF_8.toString())
+    private suspend fun fetchFallbackSearchMarkets(city: CityConfig): List<ParsedMarket> = coroutineScope {
+        val queries = PolymarketCityHeuristics.buildSearchQueries(city)
+            .ifEmpty { listOf(buildPrimaryQuery(city)) }
+        val perQuery = queries.map { query ->
+            async { fetchFallbackSearchMarketsForQuery(city, query) }
+        }.awaitAll()
+        perQuery
+            .flatten()
+            .distinctBy { market -> market.id }
+    }
+
+    private suspend fun fetchFallbackSearchMarketsForQuery(
+        city: CityConfig,
+        queryRaw: String
+    ): List<ParsedMarket> {
+        val query = URLEncoder.encode(queryRaw, StandardCharsets.UTF_8.toString())
         val url = "https://gamma-api.polymarket.com/markets?search=$query&active=true&closed=false&order=id&ascending=false&limit=120"
 
         return runCatching {
@@ -250,7 +290,8 @@ class PolymarketSource(
                 headers = mapOf(
                     "User-Agent" to "PolyMeteo/0.1",
                     "Accept" to "application/json"
-                )
+                ),
+                retries = 2
             )
             if (response.code !in 200..299) return emptyList()
             val root = json.parseToJsonElement(response.body) as? JsonArray ?: return emptyList()
@@ -266,12 +307,21 @@ class PolymarketSource(
         allowClosed: Boolean = false
     ): ParsedMarket? {
         val question = obj.stringOrNull("question") ?: return null
-        if (!question.contains("highest temperature", ignoreCase = true)) return null
-        if (!containsCityName(question, city.name)) return null
+        if (!isHighestTemperatureQuestion(question)) return null
+        if (!PolymarketCityHeuristics.questionMatchesCity(question, city)) return null
 
         val isActive = obj.booleanOrNull("active") ?: true
         val isClosed = obj.booleanOrNull("closed") ?: false
-        if (!allowClosed && (!isActive || isClosed)) return null
+        val umaResolutionStatus = obj.stringOrNull("umaResolutionStatus")?.lowercase(Locale.US)
+        val closedTime = obj.stringOrNull("closedTime")
+        val isResolved = umaResolutionStatus == "resolved" ||
+            isClosed ||
+            !closedTime.isNullOrBlank()
+
+        if (!allowClosed) {
+            if (!isActive || isClosed) return null
+            if (isResolved) return null
+        }
 
         val condition = parseConditionFromQuestion(question, city.zoneId) ?: return null
         val outcomes = parseStringArray(obj.stringOrNull("outcomes"))
@@ -507,19 +557,19 @@ class PolymarketSource(
 
     private fun parseConditionFromQuestion(question: String, cityZoneId: String): MarketRangeCondition? {
         val geRegex = Regex(
-            """be\s*(-?\d+(?:\.\d+)?)\s*[°º]?\s*([CF])\s*or\s*higher\s*on\s*([A-Za-z]+\s+\d{1,2})""",
+            """be\s*(-?\d+(?:\.\d+)?)\s*[°º]?\s*([CF])\s*or\s*higher\s*on\s*([A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*\d{4})?)""",
             RegexOption.IGNORE_CASE
         )
         val leRegex = Regex(
-            """be\s*(-?\d+(?:\.\d+)?)\s*[°º]?\s*([CF])\s*or\s*below\s*on\s*([A-Za-z]+\s+\d{1,2})""",
+            """be\s*(-?\d+(?:\.\d+)?)\s*[°º]?\s*([CF])\s*or\s*below\s*on\s*([A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*\d{4})?)""",
             RegexOption.IGNORE_CASE
         )
         val betweenRegex = Regex(
-            """be\s*between\s*(-?\d+(?:\.\d+)?)\s*[-–]\s*(-?\d+(?:\.\d+)?)\s*[°º]?\s*([CF])\s*on\s*([A-Za-z]+\s+\d{1,2})""",
+            """be\s*between\s*(-?\d+(?:\.\d+)?)\s*[-–]\s*(-?\d+(?:\.\d+)?)\s*[°º]?\s*([CF])\s*on\s*([A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*\d{4})?)""",
             RegexOption.IGNORE_CASE
         )
         val exactRegex = Regex(
-            """be\s*(-?\d+(?:\.\d+)?)\s*[°º]?\s*([CF])\s*on\s*([A-Za-z]+\s+\d{1,2})""",
+            """be\s*(-?\d+(?:\.\d+)?)\s*[°º]?\s*([CF])\s*on\s*([A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*\d{4})?)""",
             RegexOption.IGNORE_CASE
         )
 
@@ -573,18 +623,46 @@ class PolymarketSource(
     private fun parseMonthDayDate(raw: String, cityZoneId: String): LocalDate? {
         val zoneId = ZoneId.of(cityZoneId)
         val today = LocalDate.now(zoneId)
-        val value = raw.trim().replace(Regex("\\s+"), " ")
-        val formatters = listOf(
+        val value = raw.trim()
+            .replace(Regex("(?i)(\\d{1,2})(st|nd|rd|th)"), "$1")
+            .replace(",", " ")
+            .replace(Regex("\\s+"), " ")
+        val formattersWithYear = listOf(
             DateTimeFormatter.ofPattern("MMMM d uuuu", Locale.ENGLISH),
             DateTimeFormatter.ofPattern("MMM d uuuu", Locale.ENGLISH)
         )
+        val formattersWithoutYear = listOf(
+            DateTimeFormatter.ofPattern("MMMM d", Locale.ENGLISH),
+            DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH)
+        )
 
-        val candidates = buildList {
-            for (year in listOf(today.year - 1, today.year, today.year + 1)) {
-                val withYear = "$value $year"
-                formatters.forEach { formatter ->
+        val candidates = mutableListOf<LocalDate>()
+        val yearsToTry = listOf(today.year - 1, today.year, today.year + 1)
+
+        formattersWithYear.forEach { formatter ->
+            val parsed = runCatching { LocalDate.parse(value, formatter) }.getOrNull()
+            if (parsed != null) {
+                candidates += parsed
+            }
+        }
+
+        formattersWithoutYear.forEach { formatter ->
+            val parsed = runCatching { LocalDate.parse(value, formatter) }.getOrNull()
+            if (parsed != null) {
+                yearsToTry.forEach { year ->
+                    candidates += parsed.withYear(year)
+                }
+            }
+        }
+
+        if (candidates.isEmpty()) {
+            formattersWithYear.forEach { formatter ->
+                yearsToTry.forEach { year ->
+                    val withYear = "$value $year"
                     val parsed = runCatching { LocalDate.parse(withYear, formatter) }.getOrNull()
-                    if (parsed != null) add(parsed)
+                    if (parsed != null) {
+                        candidates += parsed
+                    }
                 }
             }
         }
@@ -611,31 +689,18 @@ class PolymarketSource(
         }.getOrDefault(emptyList())
     }
 
-    private fun buildQuery(city: CityConfig): String = "highest temperature in ${city.name}"
-
-    private fun buildEventSlug(cityName: String, date: LocalDate): String {
-        val citySlug = slugifyCity(cityName)
-        val monthSlug = date.format(DateTimeFormatter.ofPattern("MMMM", Locale.ENGLISH)).lowercase(Locale.US)
-        return "highest-temperature-in-$citySlug-on-$monthSlug-${date.dayOfMonth}-${date.year}"
+    private fun buildPrimaryQuery(city: CityConfig): String {
+        return PolymarketCityHeuristics.buildSearchQueries(city)
+            .firstOrNull()
+            ?: "highest temperature in ${city.name}"
     }
 
-    private fun slugifyCity(cityName: String): String {
-        return normalizeToken(cityName)
-            .replace(Regex("[^a-z0-9\\s-]"), "")
-            .trim()
-            .replace(Regex("\\s+"), "-")
-    }
-
-    private fun containsCityName(question: String, cityName: String): Boolean {
-        val q = normalizeToken(question)
-        val c = normalizeToken(cityName)
-        return q.contains(c)
-    }
-
-    private fun normalizeToken(value: String): String {
-        return Normalizer.normalize(value, Normalizer.Form.NFD)
-            .replace(Regex("\\p{M}+"), "")
-            .lowercase(Locale.US)
+    private fun isHighestTemperatureQuestion(question: String): Boolean {
+        val normalized = question.lowercase(Locale.US)
+        return normalized.contains("highest temperature") ||
+            normalized.contains("highest temp") ||
+            normalized.contains("temperatura mas alta") ||
+            normalized.contains("temperatura más alta")
     }
 
     private fun List<ParsedMarket>.filterByTargetDates(targetDates: Set<LocalDate>): List<ParsedMarket> {
