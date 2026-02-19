@@ -11,3 +11,10 @@
 - Confirmar que para mañana/pasado la app muestra "SIN METAR" y usa solo pronósticos del horizonte seleccionado.
 - Verificar fallback de búsqueda (search query) cuando el slug directo falla.
 - Registrar incidencias por ciudad y hora (captura + payload + decisión esperada).
+
+## Integración de cuenta Polymarket (próximos días)
+- Fase 1 (solo lectura): pantalla de Cuenta con cartera, valor total, posiciones y actividad reciente.
+- Requiere: dirección de usuario (`user address`) y, si aplica, `proxy/funder wallet`.
+- Fase 2 (operativa): integración CLOB para crear/cancelar órdenes desde la app.
+- Requiere: credenciales CLOB (`api key`, `secret`, `passphrase`) y flujo de firma wallet seguro.
+- Seguridad: nunca introducir ni almacenar seed phrase o clave privada en texto plano.
