@@ -41,6 +41,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.polymeteo.meteotrader.data.model.CityWeatherData
 import com.polymeteo.meteotrader.data.model.ForecastSourceResult
@@ -157,6 +158,12 @@ fun CityDetailScreen(
                 valueInDisplayUnit = cityData.polyTempPremiumInUnit(),
                 displayUnit = unit
             )
+            val tafIssuedAt = cityData.taf.issuedAt.formatInZone(cityData.city.zoneId, "dd-MM-yyyy HH:mm")
+            val tafValidity = formatTafValidityWindow(
+                from = cityData.taf.validFrom,
+                to = cityData.taf.validTo,
+                zoneId = cityData.city.zoneId
+            )
             val cityZoneId = ZoneId.of(cityData.city.zoneId)
             val cityToday = LocalDate.now(cityZoneId)
             val dayTabs = listOf(
@@ -209,9 +216,38 @@ fun CityDetailScreen(
                             value = polyPremiumWithSecondaryUnit,
                             onClick = onOpenPolyTempPremium
                         )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            HelpPill(
+                                text = "TAF",
+                                topic = TraderHelpTopic.TAF,
+                                onHelpRequested = { helpTopic = it },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        DetailPair("TAF emitido", tafIssuedAt)
+                        DetailPair("TAF vigencia", tafValidity)
+                        DetailPair("TAF resumen", cityData.taf.summary ?: "--")
+                        if (!cityData.taf.error.isNullOrBlank()) {
+                            Text(
+                                text = cityData.taf.error,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Negative,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
                         SourceLinkRow(
                             label = "Fuente METAR",
                             url = cityData.metar.sourceUrl,
+                            onOpenUrl = openExternalUrl
+                        )
+                        SourceLinkRow(
+                            label = "Fuente TAF",
+                            url = cityData.taf.sourceUrl,
                             onOpenUrl = openExternalUrl
                         )
                         SourceLinkRow(
@@ -226,6 +262,17 @@ fun CityDetailScreen(
                                 fontFamily = FontFamily.Monospace,
                                 color = MutedInk,
                                 modifier = Modifier.padding(top = 8.dp)
+                            )
+                        }
+                        if (!cityData.taf.rawText.isNullOrBlank()) {
+                            Text(
+                                text = cityData.taf.rawText.orEmpty(),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MutedInk,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(top = 6.dp)
                             )
                         }
                     }
@@ -437,6 +484,17 @@ private fun formatTemperatureWithAlternateUnit(
     val otherUnit = if (displayUnit == TempUnit.C) TempUnit.F else TempUnit.C
     val otherValue = convertTemperature(valueInDisplayUnit, from = displayUnit, to = otherUnit)
     return "${formatTemperature(valueInDisplayUnit, displayUnit)} (${formatTemperature(otherValue, otherUnit)})"
+}
+
+private fun formatTafValidityWindow(
+    from: Instant?,
+    to: Instant?,
+    zoneId: String
+): String {
+    if (from == null && to == null) return "--"
+    val fromText = from.formatInZone(zoneId, "dd-MM-yyyy HH:mm")
+    val toText = to.formatInZone(zoneId, "dd-MM-yyyy HH:mm")
+    return "$fromText -> $toText"
 }
 
 private data class TraderDayTab(
@@ -1111,5 +1169,9 @@ private enum class TraderHelpTopic(
     LIQUIDITY(
         title = "Liquidez",
         message = "Liq muestra cuanto dinero hay en ese mercado. Con liquidez baja, el precio se mueve facil y cuesta entrar o salir sin perder valor."
+    ),
+    TAF(
+        title = "TAF",
+        message = "TAF es el pronostico aeronautico oficial del aeropuerto. Sirve para anticipar cambios de nubes, visibilidad, viento y fenomenos que pueden frenar o impulsar la maxima diaria."
     )
 }

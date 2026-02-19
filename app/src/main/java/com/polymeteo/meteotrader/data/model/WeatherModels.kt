@@ -59,6 +59,16 @@ data class MetarSnapshot(
     val error: String?
 )
 
+data class TafSnapshot(
+    val sourceUrl: String,
+    val issuedAt: Instant?,
+    val validFrom: Instant?,
+    val validTo: Instant?,
+    val rawText: String?,
+    val summary: String?,
+    val error: String?
+)
+
 data class ControlStationSnapshot(
     val sourceUrl: String?,
     val tempC: Double?,
@@ -123,6 +133,7 @@ data class CityWeatherData(
     val city: CityConfig,
     val localTime: String,
     val metar: MetarSnapshot,
+    val taf: TafSnapshot,
     val controlStation: ControlStationSnapshot,
     val forecasts: List<ForecastSourceResult>,
     val polyTempC: Double?,

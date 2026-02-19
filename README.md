@@ -15,6 +15,7 @@ App Android (Jetpack Compose) para mercados de temperatura máxima diaria en Pol
   - Señal trader (`OVER` / `UNDER` / `RANGE`) + edge estimado
 - Pantalla detalle por ciudad con:
   - Bloque completo METAR
+  - Bloque TAF operativo (fuente, vigencia, resumen)
   - Lista de fuentes de forecast con `Now`, `Max`, estado y error
   - Errores acumulados por proveedor
   - Trader Mode: mercados Polymarket detectados, edge por mercado, recomendación `YES/NO`, semáforo y top edge de ciudad
@@ -33,6 +34,7 @@ App Android (Jetpack Compose) para mercados de temperatura máxima diaria en Pol
 ## Fuentes conectadas
 
 - METAR: `aviationweather.gov` (JSON, últimas 24h).
+- TAF: `aviationweather.gov` (JSON METAR + `taf=1`, vigencia operacional del aeródromo).
 - Control station: scraping Wunderground (`history/daily` + `dashboard/pws` fallback).
 - Forecasts para PolyTEMP:
   - Windy (ECMWF/GFS/ICON)

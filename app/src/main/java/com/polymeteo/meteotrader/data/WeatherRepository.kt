@@ -19,12 +19,14 @@ import com.polymeteo.meteotrader.data.model.MetarSnapshot
 import com.polymeteo.meteotrader.data.model.PolyTempPremiumReport
 import com.polymeteo.meteotrader.data.model.PolymarketSnapshot
 import com.polymeteo.meteotrader.data.model.SourceStatus
+import com.polymeteo.meteotrader.data.model.TafSnapshot
 import com.polymeteo.meteotrader.data.premium.PolyTempPremiumEngine
 import com.polymeteo.meteotrader.data.premium.PolyTempPremiumStore
 import com.polymeteo.meteotrader.data.premium.PremiumWeightSnapshot
 import com.polymeteo.meteotrader.data.source.HttpClient
 import com.polymeteo.meteotrader.data.source.MetarSource
 import com.polymeteo.meteotrader.data.source.PolymarketSource
+import com.polymeteo.meteotrader.data.source.TafSource
 import com.polymeteo.meteotrader.data.source.WundergroundSource
 import com.polymeteo.meteotrader.util.celsiusToFahrenheit
 import kotlinx.coroutines.async
@@ -43,6 +45,7 @@ import kotlin.math.max
 
 class WeatherRepository(
     private val metarSource: MetarSource,
+    private val tafSource: TafSource,
     private val wundergroundSource: WundergroundSource,
     private val forecastProviders: List<ForecastProvider>,
     private val polymarketSource: PolymarketSource,
@@ -99,12 +102,14 @@ class WeatherRepository(
         val targetDate = LocalDate.now(zoneId)
 
         val metarDeferred = async { fetchMetarWithTimeout(city) }
+        val tafDeferred = async { fetchTafWithTimeout(city) }
         val controlDeferred = async { fetchControlWithTimeout(city) }
         val forecastsDeferred = forecastProviders.map { provider ->
             async { fetchForecastWithTimeout(provider, city, targetDate) }
         }
 
         val metar = metarDeferred.await()
+        val taf = tafDeferred.await()
         val control = controlDeferred.await()
         val forecasts = forecastsDeferred.awaitAll()
 
@@ -135,6 +140,7 @@ class WeatherRepository(
 
         val warnings = buildList {
             metar.error?.let { add("METAR: $it") }
+            taf.error?.let { add("TAF: $it") }
             control.error?.let { add("Wunderground: $it") }
             polymarket.error?.let { add("Polymarket: $it") }
             forecasts.filter { it.status == SourceStatus.ERROR }.forEach { result ->
@@ -152,6 +158,7 @@ class WeatherRepository(
             city = city,
             localTime = currentLocalTime(zoneId),
             metar = metar,
+            taf = taf,
             controlStation = control,
             forecasts = forecasts,
             polyTempC = polyTempBaseComputation.polyTempC,
@@ -179,6 +186,21 @@ class WeatherRepository(
             current = null,
             previousSameDay = null,
             error = "Timeout METAR"
+        )
+    }
+
+    private suspend fun fetchTafWithTimeout(city: CityConfig): TafSnapshot {
+        val fallbackUrl = "https://aviationweather.gov/api/data/metar?ids=${city.metarCode}&format=json&hours=24&taf=1"
+        return withTimeoutOrNull(TAF_TIMEOUT_MS) {
+            tafSource.fetch(city)
+        } ?: TafSnapshot(
+            sourceUrl = fallbackUrl,
+            issuedAt = null,
+            validFrom = null,
+            validTo = null,
+            rawText = null,
+            summary = null,
+            error = "Timeout TAF"
         )
     }
 
@@ -355,6 +377,7 @@ class WeatherRepository(
     companion object {
         private const val MAX_CITY_CONCURRENCY = 4
         private const val METAR_TIMEOUT_MS = 7_000L
+        private const val TAF_TIMEOUT_MS = 6_000L
         private const val CONTROL_TIMEOUT_MS = 8_000L
         private const val FORECAST_TIMEOUT_MS = 9_000L
         private const val POLYMARKET_TIMEOUT_MS = 6_000L
@@ -365,6 +388,7 @@ class WeatherRepository(
         fun createDefault(context: Context? = null): WeatherRepository {
             val httpClient = HttpClient()
             val metarSource = MetarSource(httpClient)
+            val tafSource = TafSource(httpClient)
             val wundergroundSource = WundergroundSource(httpClient)
             val polymarketSource = PolymarketSource(httpClient)
             val backtestEngine = context?.let {
@@ -429,6 +453,7 @@ class WeatherRepository(
 
             return WeatherRepository(
                 metarSource = metarSource,
+                tafSource = tafSource,
                 wundergroundSource = wundergroundSource,
                 forecastProviders = providers,
                 polymarketSource = polymarketSource,

@@ -297,7 +297,7 @@
     <section id="indice" class="box toc">
       <h2>Índice</h2>
       <ol>
-        <li><a href="#novedades-v21">Novedades desde la versión anterior (v2.1)</a></li>
+        <li><a href="#novedades-v22">Novedades desde la versión anterior (v2.2)</a></li>
         <li><a href="#capitulo-0">Capítulo 0: Basics de mercados de predicción</a></li>
         <li><a href="#capitulo-1">Capítulo 1: Qué es Polymarket y por qué esta app es clave</a></li>
         <li><a href="#capitulo-2">Capítulo 2: Flujo general de uso (de principiante a operativo)</a></li>
@@ -314,8 +314,8 @@
       </ol>
     </section>
 
-    <section id="novedades-v21">
-      <h2>Novedades desde la versión anterior (v2.1)</h2>
+    <section id="novedades-v22">
+      <h2>Novedades desde la versión anterior (v2.2)</h2>
       <div class="box">
         <h3>Cambios visibles para el usuario</h3>
         <ul>
@@ -324,6 +324,16 @@
           <li><strong>DETALLE:</strong> <code>PolyTemp PREMIUM</code> muestra valor numérico (no solo enlace) y abre su dashboard al pulsar en etiqueta o valor.</li>
           <li><strong>DETALLE:</strong> se mantiene la mejora de lectura de <code>METAR actual</code> con fecha/hora y <code>METAR anterior</code> con <code>(Hace X horas)</code>.</li>
           <li><strong>DETALLE:</strong> temperaturas clave muestran unidad principal + conversión entre paréntesis para evitar errores de interpretación.</li>
+          <li><strong>DETALLE:</strong> se integra bloque operacional <code>TAF</code> con resumen, vigencia e incidencias relevantes.</li>
+          <li><strong>Ayuda en directo:</strong> el término <code>TAF</code> es clicable y explica uso práctico para principiantes.</li>
+        </ul>
+      </div>
+
+      <div class="box-alt">
+        <h3>Nueva capa aeronáutica de contexto</h3>
+        <ul>
+          <li><code>TAF</code>: pronóstico oficial de aeródromo para entender régimen esperado de nubes, visibilidad, viento y cambios.</li>
+          <li>TAF no sustituye el dato de resolución, pero mejora disciplina y control de riesgo.</li>
         </ul>
       </div>
 
@@ -523,7 +533,7 @@
       </figure>
 
       <div class="box">
-        <h3>Bloque METAR / Estación / PolyTEMP</h3>
+        <h3>Bloque METAR / Estación / PolyTEMP / TAF</h3>
         <table>
           <thead>
             <tr><th>Campo</th><th>Qué es</th><th>Qué te aporta</th></tr>
@@ -535,9 +545,20 @@
             <tr><td><code>Temp estación control</code></td><td>Máxima actual acumulada del día con unidad principal + unidad alternativa.</td><td>Clave para resolver mercados diarios sin errores de escala C/F.</td></tr>
             <tr><td><code>PolyTEMP</code></td><td>Consenso de modelos forecast (sin aprendizaje dinámico), resaltado en verde.</td><td>Punto de referencia base para comparar con mercado.</td></tr>
             <tr><td><code>PolyTemp PREMIUM</code></td><td>Estimación con aprendizaje diario por ciudad/modelo; valor numérico clicable.</td><td>Estimación adaptativa que debe mejorar con historial de verificación.</td></tr>
-            <tr><td><code>Fuente METAR</code> y <code>Fuente estación</code></td><td>Etiquetas clicables con acción <code>Abrir</code> (sin mostrar URL larga en pantalla).</td><td>Auditoría y verificación directa sin ensuciar la lectura.</td></tr>
+            <tr><td><code>TAF emitido</code> y <code>TAF vigencia</code></td><td>Momento de emisión y ventana temporal válida del TAF.</td><td>Te ayuda a detectar si el escenario esperado cambia durante el día del mercado.</td></tr>
+            <tr><td><code>TAF resumen</code></td><td>Resumen automático de riesgos/cambios (ej. TEMPO/BECMG, visibilidad, tormenta).</td><td>Contexto rápido para validar o invalidar tesis OVER/UNDER.</td></tr>
+            <tr><td><code>Fuente METAR</code>, <code>Fuente TAF</code> y <code>Fuente estación</code></td><td>Etiquetas clicables con acción <code>Abrir</code> (sin mostrar URL larga en pantalla).</td><td>Auditoría y verificación directa sin ensuciar la lectura.</td></tr>
           </tbody>
         </table>
+      </div>
+
+      <div class="box-alt">
+        <h3>Cómo usar TAF sin sobrecomplicarte</h3>
+        <ul>
+          <li>Primero mira METAR + estación + PolyTEMP: eso define la hipótesis principal.</li>
+          <li>Después usa TAF como filtro de coherencia: ¿apoya el escenario o lo contradice?</li>
+          <li>Si TAF contradice tu tesis principal, reduce tamaño o espera mejor confirmación antes de entrar.</li>
+        </ul>
       </div>
 
       <div class="box-alt">
@@ -804,6 +825,7 @@
       <div class="faq-item"><strong>Si sale BET, ¿tengo que entrar sí o sí?</strong><br/>No. BET es señal favorable, no obligación. Tu control de riesgo manda.</div>
       <div class="faq-item"><strong>¿Qué significa FLASH en la pantalla principal?</strong><br/>Es una alerta de prioridad alta durante 1 minuto cuando se detecta oportunidad fuerte y ejecutable. No es orden automática de compra.</div>
       <div class="faq-item"><strong>¿PolyTEMP y PolyTemp PREMIUM son lo mismo?</strong><br/>No. PolyTEMP es promedio ponderado base; PolyTemp PREMIUM aplica aprendizaje diario por ciudad y ajusta pesos según acierto histórico.</div>
+      <div class="faq-item"><strong>¿Para qué sirve TAF si ya tengo METAR?</strong><br/>METAR describe lo observado ahora. TAF anticipa el escenario de las próximas horas. Usar ambos reduce entradas basadas solo en una foto puntual.</div>
       <div class="faq-item"><strong>¿Qué hago si un dato sale raro o “--”?</strong><br/>Refresca y verifica fuentes externas con los enlaces clicables.</div>
       <div class="faq-item"><strong>¿Qué es mejor: acertar mucho o ganar dinero?</strong><br/>Ganar dinero con riesgo controlado. Puedes acertar poco y aun así ser rentable si gestionas bien.</div>
       <div class="faq-item"><strong>¿Por qué a veces no se ejecuta una operación?</strong><br/>Por liquidez/spread/fill. Por eso medimos NoFill y fill-rate.</div>
@@ -850,6 +872,7 @@
             <tr><td>ROI</td><td>Rentabilidad sobre stake.</td><td>PnL 1.0 con stake 10 = 10% ROI.</td></tr>
             <tr><td>Spread</td><td>Diferencia entre mejor compra y mejor venta.</td><td>Spread alto = entrada más cara.</td></tr>
             <tr><td>Stake</td><td>Coste de abrir posición.</td><td>Si compras a 0.36, stake es 0.36 por unidad.</td></tr>
+            <tr><td>TAF</td><td>Pronóstico aeronáutico oficial de aeropuerto para próximas horas.</td><td>Ayuda a validar si la tesis térmica tiene continuidad o riesgo de giro.</td></tr>
             <tr><td>Ticker dinámico</td><td>Línea horizontal móvil con resumen de oportunidades y estado de fuentes.</td><td>Sirve para priorizar ciudades sin abrir detalle de todas.</td></tr>
             <tr><td>UNDER</td><td>Tesis de máxima por debajo del umbral.</td><td>Comprar NO en umbral alto puede equivaler a tesis UNDER.</td></tr>
             <tr><td>OVER</td><td>Tesis de máxima por encima del umbral.</td><td>Útil en días de calentamiento sostenido.</td></tr>
@@ -872,7 +895,7 @@
     </section>
 
     <p class="version">
-      Manual v2.1 • Última actualización: 19-02-2026 • Feedback: <a href="mailto:digitalclaw8@gmail.com" style="color:#8fc8ff">digitalclaw8@gmail.com</a>
+      Manual v2.2 • Última actualización: 19-02-2026 • Feedback: <a href="mailto:digitalclaw8@gmail.com" style="color:#8fc8ff">digitalclaw8@gmail.com</a>
     </p>
   </div>
 </body>
