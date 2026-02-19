@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" role="img" aria-label="Mockup pantalla Paper Trading con guardrails y expected vs realized">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#071227"/>
+      <stop offset="1" stop-color="#0f2148"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="700" fill="url(#bg)"/>
+  <text x="32" y="54" font-family="Segoe UI, Arial" font-size="40" fill="#ffffff" font-weight="700">Paper Trading</text>
+
+  <rect x="30" y="78" width="1140" height="238" rx="10" fill="#102043" stroke="#315a98"/>
+  <text x="46" y="112" font-family="Segoe UI, Arial" font-size="22" fill="#a9b8dc">Generado: 19-02-2026 13:20 UTC</text>
+  <text x="46" y="146" font-family="Segoe UI, Arial" font-size="24" fill="#ffc857">Modo: DEMO</text>
+
+  <g font-family="Segoe UI, Arial" font-size="22" fill="#dce8ff">
+    <text x="46" y="186">Simul. 56</text>
+    <text x="246" y="186">Exec 34</text>
+    <text x="406" y="186">NoFill 22</text>
+    <text x="616" y="186">Fill 60.7%</text>
+  </g>
+
+  <g font-family="Segoe UI, Arial" font-size="22">
+    <text x="46" y="226" fill="#a7b7db">Expected PnL</text><text x="300" y="226" fill="#dce8ff">+1.230u</text>
+    <text x="46" y="258" fill="#a7b7db">Realized PnL</text><text x="300" y="258" fill="#39d98a">+0.740u</text>
+    <text x="46" y="290" fill="#a7b7db">Gap ejecución</text><text x="300" y="290" fill="#ff6b6b">-0.490u</text>
+
+    <text x="640" y="226" fill="#a7b7db">Guardrails</text><text x="860" y="226" fill="#39d98a">ACTIVO/OK</text>
+    <text x="640" y="258" fill="#a7b7db">PnL día UTC</text><text x="860" y="258" fill="#ff6b6b">-0.210u</text>
+    <text x="640" y="290" fill="#a7b7db">Loss streak</text><text x="860" y="290" fill="#ffc857">1</text>
+  </g>
+
+  <rect x="30" y="334" width="1140" height="160" rx="10" fill="#0f1d3a" stroke="#375b95"/>
+  <text x="46" y="366" font-family="Segoe UI, Arial" font-size="28" fill="#8fc8ff">Ranking por ciudad</text>
+  <text x="46" y="402" font-family="Segoe UI, Arial" font-size="22" fill="#dce8ff">London · Sim/Exec 12/8 · Fill 66.7% · Real +0.32u · Exp +0.45u · Gap -0.13u</text>
+  <text x="46" y="434" font-family="Segoe UI, Arial" font-size="22" fill="#dce8ff">Toronto · Sim/Exec 11/7 · Fill 63.6% · Real +0.21u · Exp +0.34u · Gap -0.13u</text>
+  <text x="46" y="466" font-family="Segoe UI, Arial" font-size="22" fill="#dce8ff">Miami · Sim/Exec 9/5 · Fill 55.5% · Real -0.08u · Exp +0.10u · Gap -0.18u</text>
+
+  <rect x="30" y="512" width="1140" height="156" rx="10" fill="#0f1d3a" stroke="#375b95"/>
+  <text x="46" y="544" font-family="Segoe UI, Arial" font-size="28" fill="#8fc8ff">Liquidaciones recientes</text>
+  <text x="46" y="578" font-family="Segoe UI, Arial" font-size="21" fill="#dce8ff">London · UNDER NO · EXEC · Real +0.18u · Exp +0.21u · Gap -0.03u</text>
+  <text x="46" y="608" font-family="Segoe UI, Arial" font-size="21" fill="#dce8ff">Paris · OVER YES · NO-FILL · Real +0.00u · Exp +0.06u · Gap -0.06u</text>
+  <text x="46" y="638" font-family="Segoe UI, Arial" font-size="21" fill="#dce8ff">Chicago · UNDER NO · EXEC · Real -0.09u · Exp +0.02u · Gap -0.11u</text>
+</svg>

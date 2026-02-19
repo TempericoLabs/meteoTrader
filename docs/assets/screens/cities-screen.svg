@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" role="img" aria-label="Mockup pantalla CIUDADES con grid de ciudades y top ejecutables">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#09142b"/>
+      <stop offset="1" stop-color="#0f2349"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="700" fill="url(#bg)"/>
+  <text x="40" y="56" font-family="Segoe UI, Arial" font-size="44" fill="#e7f1ff" font-weight="700">PolyMeteo</text>
+  <text x="40" y="92" font-family="Segoe UI, Arial" font-size="20" fill="#9fb1d9">Actualizado: 12:54:48 UTC</text>
+  <circle cx="1118" cy="56" r="38" fill="#2e97ff"/>
+  <path d="M1118 35a22 22 0 1 1-16 6" fill="none" stroke="#071935" stroke-width="6"/>
+  <path d="M1104 32l-2 15 14-3" fill="#071935"/>
+
+  <rect x="40" y="116" width="1120" height="92" rx="10" fill="#102043" stroke="#2e4f8c"/>
+  <text x="62" y="146" font-family="Segoe UI, Arial" font-size="24" fill="#8fc8ff">Top Ejecutables</text>
+  <text x="62" y="178" font-family="Segoe UI, Arial" font-size="30" fill="#e7f1ff">Toronto • BET • UNDER • NO 57.5%</text>
+
+  <g font-family="Segoe UI, Arial" font-size="18" fill="#dbe8ff">
+    <rect x="40" y="228" width="540" height="132" fill="#122549" stroke="#385b98"/>
+    <text x="58" y="260" font-size="44" fill="#ffffff">London</text>
+    <text x="502" y="260" fill="#a8b8dd">12:54</text>
+    <text x="58" y="298" fill="#a8b8dd">M 8°C</text>
+    <text x="168" y="298" fill="#a8b8dd">Δ +1°C</text>
+    <text x="308" y="298" fill="#a8b8dd">S 8°C</text>
+    <text x="428" y="298" fill="#39d98a">P 9°C</text>
+    <rect x="58" y="314" width="504" height="30" fill="#113624" stroke="#39d98a"/>
+    <text x="72" y="335" fill="#39d98a">UNDER • BET NO 57.5%</text>
+
+    <rect x="620" y="228" width="540" height="132" fill="#122549" stroke="#385b98"/>
+    <text x="638" y="260" font-size="44" fill="#ffffff">Miami</text>
+    <text x="1082" y="260" fill="#a8b8dd">06:54</text>
+    <text x="638" y="298" fill="#a8b8dd">M 74°F</text>
+    <text x="758" y="298" fill="#a8b8dd">Δ -1°F</text>
+    <text x="898" y="298" fill="#a8b8dd">S 75°F</text>
+    <text x="1020" y="298" fill="#ffc857">P 76°F</text>
+    <rect x="638" y="314" width="504" height="30" fill="#3d3110" stroke="#ffc857"/>
+    <text x="652" y="335" fill="#ffc857">OVER • PASS YES 2.1%</text>
+  </g>
+
+  <g fill="#132a52" stroke="#355a98">
+    <rect x="40" y="380" width="540" height="132"/>
+    <rect x="620" y="380" width="540" height="132"/>
+    <rect x="40" y="532" width="540" height="132"/>
+    <rect x="620" y="532" width="540" height="132"/>
+  </g>
+  <text x="52" y="412" font-family="Segoe UI, Arial" font-size="24" fill="#91a6d6">+ 10 ciudades más...</text>
+</svg>

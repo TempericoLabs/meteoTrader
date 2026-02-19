@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" role="img" aria-label="Mockup pantalla DETALLE con METAR, PolyTEMP y Trader Mode">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a1429"/>
+      <stop offset="1" stop-color="#13264e"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="700" fill="url(#bg)"/>
+  <text x="30" y="54" font-family="Segoe UI, Arial" font-size="42" fill="#ffffff" font-weight="700">London</text>
+  <text x="1110" y="54" font-family="Segoe UI, Arial" font-size="28" fill="#8fc8ff">↻</text>
+
+  <rect x="30" y="78" width="1140" height="216" rx="10" fill="#102043" stroke="#355b95"/>
+  <text x="46" y="110" font-family="Segoe UI, Arial" font-size="26" fill="#dce9ff">METAR (EGLC)</text>
+  <g font-family="Segoe UI, Arial" font-size="24" fill="#dce9ff">
+    <text x="46" y="148">Hora local</text><text x="400" y="148" fill="#a9b9dd">13:04</text>
+    <text x="46" y="180">METAR actual</text><text x="400" y="180">8.0°C (19-02-2026 13:00)</text>
+    <text x="46" y="212">METAR anterior</text><text x="400" y="212">7.0°C (Hace 1 horas)</text>
+    <text x="46" y="244">Temp estación control</text><text x="400" y="244">8.0°C (46.4°F)</text>
+    <text x="46" y="276" fill="#39d98a" font-weight="700">PolyTEMP</text><text x="400" y="276" fill="#39d98a" font-weight="700">9.1°C (48.4°F)</text>
+  </g>
+
+  <rect x="30" y="312" width="1140" height="120" rx="10" fill="#101f3f" stroke="#2f5f9a"/>
+  <text x="46" y="346" font-family="Segoe UI, Arial" font-size="30" fill="#8fc8ff">Trader Mode</text>
+  <text x="46" y="380" font-family="Segoe UI, Arial" font-size="24" fill="#dce9ff">Top ejecutable (Hoy): UNDER • NO 5.7% • BET</text>
+  <text x="46" y="412" font-family="Segoe UI, Arial" font-size="20" fill="#a8b8dd">Bruto 9.1% • Costes 2.2% • Fill 0.81</text>
+
+  <rect x="30" y="446" width="1140" height="222" rx="10" fill="#0f1d3a" stroke="#375d98"/>
+  <text x="46" y="480" font-family="Segoe UI, Arial" font-size="22" fill="#ffffff">Will the highest temperature in London be 8°C on February 19?</text>
+  <text x="46" y="515" font-family="Segoe UI, Arial" font-size="24" fill="#39d98a">UNDER • NO • VERDE • BET</text>
+  <text x="46" y="548" font-family="Segoe UI, Arial" font-size="20" fill="#c7d8ff">Exec 5.7% · Bruto 9.1% · Costes 2.2%</text>
+  <text x="46" y="576" font-family="Segoe UI, Arial" font-size="20" fill="#c7d8ff">Fill 81% · Post-coste 6.9% · Fee 0.9%</text>
+  <text x="46" y="604" font-family="Segoe UI, Arial" font-size="20" fill="#c7d8ff">Model YES 36.0% · Mkt YES 30.3% · Liq 4100 · Spread 0.01</text>
+</svg>
