@@ -37,6 +37,17 @@ data class PolyTempPremiumVerificationDay(
     val providers: List<PolyTempPremiumProviderDay>
 )
 
+data class PolyTempPremiumBootstrapProgress(
+    val horizonDays: Int,
+    val startDate: LocalDate,
+    val endDate: LocalDate,
+    val nextDate: LocalDate,
+    val processedDays: Int,
+    val totalDays: Int,
+    val completed: Boolean,
+    val lastError: String?
+)
+
 data class PolyTempPremiumReport(
     val cityId: String,
     val cityName: String,
@@ -46,6 +57,7 @@ data class PolyTempPremiumReport(
     val pendingDays: Int,
     val providerRanking: List<PolyTempPremiumModelStat>,
     val dynamicWeights: Map<String, Double>,
+    val bootstrapProgress: List<PolyTempPremiumBootstrapProgress>,
     val dayVerifications: List<PolyTempPremiumVerificationDay>,
     val warnings: List<String>
 ) {
@@ -60,6 +72,7 @@ data class PolyTempPremiumReport(
                 pendingDays = 0,
                 providerRanking = emptyList(),
                 dynamicWeights = emptyMap(),
+                bootstrapProgress = emptyList(),
                 dayVerifications = emptyList(),
                 warnings = emptyList()
             )

@@ -33,6 +33,8 @@ import com.polymeteo.meteotrader.data.source.PolymarketSource
 import com.polymeteo.meteotrader.data.source.PolymarketSource.ModelInput
 import com.polymeteo.meteotrader.data.source.TafSource
 import com.polymeteo.meteotrader.data.source.WundergroundSource
+import com.polymeteo.meteotrader.data.source.OpenMeteoHistoricalSource
+import com.polymeteo.meteotrader.data.source.NoaaObservedSource
 import com.polymeteo.meteotrader.util.celsiusToFahrenheit
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -607,6 +609,11 @@ class WeatherRepository(
             val tafSource = TafSource(httpClient)
             val wundergroundSource = WundergroundSource(httpClient)
             val polymarketSource = PolymarketSource(httpClient)
+            val openMeteoHistoricalSource = OpenMeteoHistoricalSource(httpClient)
+            val noaaObservedSource = NoaaObservedSource(
+                httpClient = httpClient,
+                token = BuildConfig.NOAA_TOKEN
+            )
             val backtestEngine = context?.let {
                 BacktestEngine(
                     store = BacktestStore(it),
@@ -619,7 +626,9 @@ class WeatherRepository(
             val premiumEngine = context?.let {
                 PolyTempPremiumEngine(
                     store = PolyTempPremiumStore(it),
-                    wundergroundSource = wundergroundSource
+                    wundergroundSource = wundergroundSource,
+                    openMeteoHistoricalSource = openMeteoHistoricalSource,
+                    noaaObservedSource = noaaObservedSource
                 )
             }
 

@@ -281,6 +281,50 @@ private fun SummaryCard(
             onHelpRequested = onHelpRequested
         )
 
+        if (report.bootstrapProgress.isNotEmpty()) {
+            Text(
+                text = "Bootstrap historico (H0/H1/H2)",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFF8FC8FF),
+                textDecoration = TextDecoration.Underline,
+                modifier = Modifier.clickable { onHelpRequested(PremiumHelpTopic.BOOTSTRAP_PROGRESS) }
+            )
+            report.bootstrapProgress.forEach { progress ->
+                val progressFraction = if (progress.totalDays <= 0) {
+                    1.0
+                } else {
+                    progress.processedDays.toDouble() / progress.totalDays.toDouble()
+                }
+                val progressColor = when {
+                    progress.completed -> Positive
+                    progressFraction >= 0.85 -> Color(0xFFFFC857)
+                    else -> MutedInk
+                }
+                MetricLine(
+                    label = "H${progress.horizonDays} ${horizonLabel(progress.horizonDays)}",
+                    value = "${progress.processedDays}/${progress.totalDays} (${formatPercent(progressFraction)})",
+                    topic = PremiumHelpTopic.BOOTSTRAP_PROGRESS,
+                    onHelpRequested = onHelpRequested
+                )
+                Text(
+                    text = if (progress.completed) {
+                        "Completado hasta ${progress.endDate.format(DateTimeFormatter.ofPattern("dd-MM-yyyy", Locale.US))}"
+                    } else {
+                        "Cursor: ${progress.nextDate.format(DateTimeFormatter.ofPattern("dd-MM-yyyy", Locale.US))}"
+                    },
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = progressColor
+                )
+                if (!progress.lastError.isNullOrBlank()) {
+                    Text(
+                        text = progress.lastError,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFFFFC857)
+                    )
+                }
+            }
+        }
+
         PremiumHelpTerms(onHelpRequested = onHelpRequested)
     }
 }
@@ -570,6 +614,12 @@ private fun PremiumHelpTerms(onHelpRequested: (PremiumHelpTopic) -> Unit) {
             HelpPill("Score", PremiumHelpTopic.SCORE, onHelpRequested, Modifier.weight(1f))
             HelpPill("Pend", PremiumHelpTopic.PENDING_DAYS, onHelpRequested, Modifier.weight(1f))
         }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            HelpPill("Hist", PremiumHelpTopic.BOOTSTRAP_PROGRESS, onHelpRequested, Modifier.weight(1f))
+        }
     }
 }
 
@@ -734,6 +784,15 @@ private fun formatSignedWeight(value: Double): String {
     }
 }
 
+private fun horizonLabel(horizonDays: Int): String {
+    return when (horizonDays) {
+        0 -> "Hoy"
+        1 -> "Mañana"
+        2 -> "Pasado"
+        else -> "H$horizonDays"
+    }
+}
+
 private fun weightTrend(
     currentWeight: Double,
     previousWeight: Double?
@@ -780,6 +839,10 @@ private enum class PremiumHelpTopic(
     PENDING_DAYS(
         title = "Dias pendientes",
         message = "Dias con snapshots de pronostico pero sin verificacion final todavia. Normalmente bajan cuando se confirma la maxima al dia siguiente."
+    ),
+    BOOTSTRAP_PROGRESS(
+        title = "Bootstrap historico",
+        message = "Progreso de carga historica por horizonte: H0 (hoy), H1 (mañana), H2 (pasado mañana). En refresh manual avanza sin espera para acelerar calibracion."
     ),
     RANKING(
         title = "Ranking vivo",
