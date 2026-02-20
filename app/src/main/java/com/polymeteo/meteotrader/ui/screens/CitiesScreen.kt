@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -303,6 +304,7 @@ private fun CitiesGrid(
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
+            .navigationBarsPadding()
             .padding(horizontal = 8.dp, vertical = 6.dp)
     ) {
         val spacing = 8.dp
@@ -321,7 +323,7 @@ private fun CitiesGrid(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(cardHeight)
-                        .clickable { onCitySelected(cityData.city.id) }
+                        .clickable(enabled = !cityData.isClosedBySchedule) { onCitySelected(cityData.city.id) }
                 )
             }
         }
@@ -358,6 +360,7 @@ private fun RookieOpportunitiesList(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
+            .navigationBarsPadding()
             .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -443,6 +446,8 @@ private fun buildRookieOpportunities(
     strategyMode: StrategyMode
 ): List<RookieOpportunityCandidate> {
     return cities
+        .asSequence()
+        .filter { city -> !city.isClosedBySchedule }
         .flatMap { city ->
             city.polymarket.opportunities.mapNotNull { opportunity ->
                 if (!passesRookieStrategy(opportunity, strategyMode)) return@mapNotNull null
@@ -457,6 +462,7 @@ private fun buildRookieOpportunities(
                 )
             }
         }
+        .toList()
         .sortedByDescending { it.opportunity.executableEdge }
         .take(30)
 }
@@ -549,11 +555,19 @@ private fun CityCard(
     data: CityWeatherData,
     modifier: Modifier = Modifier
  ) {
+    val isScheduleClosed = data.isClosedBySchedule
     val current = data.metarCurrentInUnit()
     val delta = data.metarDeltaInUnit()
     val control = data.controlTempInUnit()
     val poly = data.polyTempInUnit()
-    val polyColor = if (data.polyTempInvalid) Negative else MaterialTheme.colorScheme.onSurface
+    val cardBackground = if (isScheduleClosed) Color(0xFF1A2431) else DarkPanel
+    val cardBorder = if (isScheduleClosed) Color(0x338EA2B7) else Color(0x33FFFFFF)
+    val primaryTextColor = if (isScheduleClosed) MutedInk else MaterialTheme.colorScheme.onSurface
+    val polyColor = when {
+        isScheduleClosed -> MutedInk
+        data.polyTempInvalid -> Negative
+        else -> MaterialTheme.colorScheme.onSurface
+    }
     val topTrader = data.polymarket.topOpportunity
 
     val deltaColor = when {
@@ -565,8 +579,8 @@ private fun CityCard(
 
     Column(
         modifier = modifier
-            .background(DarkPanel)
-            .border(width = 1.dp, color = Color(0x33FFFFFF))
+            .background(cardBackground)
+            .border(width = 1.dp, color = cardBorder)
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
@@ -578,7 +592,7 @@ private fun CityCard(
             Text(
                 text = data.city.name,
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = primaryTextColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
@@ -602,13 +616,14 @@ private fun CityCard(
             InlineMetric(
                 label = "Δ",
                 value = formatCompactDelta(delta, data.city.displayUnit),
-                valueColor = deltaColor,
+                valueColor = if (isScheduleClosed) MutedInk else deltaColor,
                 modifier = Modifier.weight(1f)
             )
             InlineMetric(
                 label = "S",
                 value = formatTemperature(control, data.city.displayUnit, digits = 0),
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                valueColor = if (isScheduleClosed) MutedInk else MaterialTheme.colorScheme.onSurface
             )
             InlineMetric(
                 label = "P",
@@ -618,7 +633,23 @@ private fun CityCard(
             )
         }
 
-        if (topTrader != null) {
+        if (isScheduleClosed) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0x2C7C8EA0))
+                    .border(1.dp, Color(0x66A3B4C4))
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "CERRADO POR HORARIO",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = MutedInk
+                )
+            }
+        } else if (topTrader != null) {
             val traderColor = when (topTrader.signal) {
                 TraderSignalLevel.GREEN -> Positive
                 TraderSignalLevel.YELLOW -> Color(0xFFFFC857)

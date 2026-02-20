@@ -1,5 +1,7 @@
 package com.polymeteo.meteotrader.data.forecast
 
+import java.util.Locale
+
 object ForecastWeights {
     const val DEFAULT_SOURCE_WEIGHT = 0.9
 
@@ -18,7 +20,38 @@ object ForecastWeights {
         "openweather" to 0.85
     )
 
+    private val DEPRECATED_PROVIDER_IDS: Set<String> = setOf(
+        "weatherstack",
+        "ecmwf-webapi",
+        "ecmwf-web-api",
+        "ecmwf_webapi"
+    )
+
+    private val DEPRECATED_PROVIDER_NAME_TOKENS: List<String> = listOf(
+        "weatherstack",
+        "ecmwf web api",
+        "ecmwf-web api",
+        "ecmwf webapi"
+    )
+
     fun baseWeightFor(sourceId: String): Double {
         return BASE_WEIGHTS[sourceId] ?: DEFAULT_SOURCE_WEIGHT
+    }
+
+    fun isDeprecatedProvider(
+        sourceId: String,
+        sourceName: String? = null
+    ): Boolean {
+        val normalizedId = sourceId.trim().lowercase(Locale.US)
+        if (DEPRECATED_PROVIDER_IDS.contains(normalizedId)) return true
+
+        val normalizedName = sourceName
+            ?.trim()
+            ?.lowercase(Locale.US)
+            .orEmpty()
+
+        return DEPRECATED_PROVIDER_NAME_TOKENS.any { token ->
+            normalizedName.contains(token)
+        }
     }
 }

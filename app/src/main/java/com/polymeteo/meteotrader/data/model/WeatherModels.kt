@@ -143,6 +143,7 @@ data class PolymarketSnapshot(
 data class CityWeatherData(
     val city: CityConfig,
     val localTime: String,
+    val isClosedBySchedule: Boolean,
     val metar: MetarSnapshot,
     val taf: TafSnapshot,
     val controlStation: ControlStationSnapshot,

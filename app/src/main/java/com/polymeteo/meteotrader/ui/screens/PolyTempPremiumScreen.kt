@@ -38,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import com.polymeteo.meteotrader.data.forecast.ForecastWeights
 import com.polymeteo.meteotrader.data.model.CityWeatherData
 import com.polymeteo.meteotrader.data.model.PolyTempPremiumModelStat
 import com.polymeteo.meteotrader.data.model.PolyTempPremiumProviderDay
@@ -72,6 +73,25 @@ fun PolyTempPremiumScreen(
     val cityZoneId = cityData?.city?.zoneId ?: "UTC"
     val uriHandler = LocalUriHandler.current
     var helpTopic by remember { mutableStateOf<PremiumHelpTopic?>(null) }
+    val visibleRanking = remember(report) {
+        report?.providerRanking
+            ?.filterNot { stat -> ForecastWeights.isDeprecatedProvider(stat.providerId, stat.providerName) }
+            .orEmpty()
+    }
+    val visibleVerifications = remember(report) {
+        report?.dayVerifications
+            ?.mapNotNull { day ->
+                val providers = day.providers.filterNot { provider ->
+                    ForecastWeights.isDeprecatedProvider(provider.providerId, provider.providerName)
+                }
+                if (providers.isEmpty()) {
+                    null
+                } else {
+                    day.copy(providers = providers)
+                }
+            }
+            .orEmpty()
+    }
 
     LaunchedEffect(report?.cityId, isRefreshing) {
         if (report == null && !isRefreshing) {
@@ -148,10 +168,10 @@ fun PolyTempPremiumScreen(
 
                 if (report == null) {
                     item { EmptyCard("Cargando ranking de modelos...") }
-                } else if (report.providerRanking.isEmpty()) {
+                } else if (visibleRanking.isEmpty()) {
                     item { EmptyCard("Aun no hay verificacion suficiente para crear ranking.") }
                 } else {
-                    items(report.providerRanking, key = { it.providerId }) { stat ->
+                    items(visibleRanking, key = { it.providerId }) { stat ->
                         ModelRankingRow(
                             stat = stat,
                             displayUnit = displayUnit,
@@ -170,11 +190,11 @@ fun PolyTempPremiumScreen(
 
                 if (report == null) {
                     item { EmptyCard("Cargando historico de verificacion...") }
-                } else if (report.dayVerifications.isEmpty()) {
+                } else if (visibleVerifications.isEmpty()) {
                     item { EmptyCard("Sin dias verificados todavia.") }
                 } else {
                     items(
-                        report.dayVerifications,
+                        visibleVerifications,
                         key = { "${it.targetDate}-${it.verifiedAt.toEpochMilli()}" }
                     ) { day ->
                         VerificationDayCard(
@@ -271,23 +291,38 @@ private fun ModelRankingRow(
     displayUnit: TempUnit,
     onHelpRequested: (PremiumHelpTopic) -> Unit
 ) {
-    val weightColor = when {
-        stat.multiplier >= 1.2 -> Positive
-        stat.multiplier <= 0.85 -> Negative
-        else -> Color(0xFFFFC857)
+    val trend = weightTrend(stat.dynamicWeight, stat.previousDynamicWeight)
+    val weightColor = when (trend) {
+        WeightTrend.UP -> Positive
+        WeightTrend.FLAT -> Color(0xFFFFC857)
+        WeightTrend.DOWN -> Negative
+    }
+    val trendLabel = when (trend) {
+        WeightTrend.UP -> "Mejora vs ayer"
+        WeightTrend.FLAT -> "Igual vs ayer"
+        WeightTrend.DOWN -> "Baja vs ayer"
+    }
+    val deltaLabel = when (val delta = stat.previousDynamicWeight?.let { stat.dynamicWeight - it }) {
+        null -> "Δ --"
+        else -> "Δ ${formatSignedWeight(delta)}"
     }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(DarkPanel)
-            .border(1.dp, Color(0x22FFFFFF))
+            .border(1.dp, weightColor.copy(alpha = 0.65f))
             .padding(10.dp)
     ) {
         Text(
             text = stat.providerName,
             style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface
+            color = weightColor
+        )
+        Text(
+            text = "$trendLabel • $deltaLabel",
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+            color = weightColor
         )
 
         Row(
@@ -691,11 +726,40 @@ private fun formatWeight(value: Double): String {
     return String.format(Locale.US, "%.2f", value)
 }
 
+private fun formatSignedWeight(value: Double): String {
+    return if (value >= 0.0) {
+        "+${String.format(Locale.US, "%.2f", value)}"
+    } else {
+        String.format(Locale.US, "%.2f", value)
+    }
+}
+
+private fun weightTrend(
+    currentWeight: Double,
+    previousWeight: Double?
+): WeightTrend {
+    if (previousWeight == null) return WeightTrend.FLAT
+    val delta = currentWeight - previousWeight
+    return when {
+        delta > WEIGHT_TREND_EPSILON -> WeightTrend.UP
+        delta < -WEIGHT_TREND_EPSILON -> WeightTrend.DOWN
+        else -> WeightTrend.FLAT
+    }
+}
+
+private enum class WeightTrend {
+    UP,
+    FLAT,
+    DOWN
+}
+
 private fun formatTempFromC(valueC: Double?, unit: TempUnit): String {
     if (valueC == null) return "--"
     val valueInUnit = if (unit == TempUnit.C) valueC else convertTemperature(valueC, TempUnit.C, unit)
     return formatTemperature(valueInUnit, unit)
 }
+
+private const val WEIGHT_TREND_EPSILON = 0.01
 
 private enum class PremiumHelpTopic(
     val title: String,
@@ -719,7 +783,7 @@ private enum class PremiumHelpTopic(
     ),
     RANKING(
         title = "Ranking vivo",
-        message = "Ordena modelos por rendimiento reciente en esta ciudad. El ranking alimenta los pesos dinamicos de PolyTemp PREMIUM."
+        message = "Ordena modelos por rendimiento reciente en esta ciudad. Verde = sube peso vs ayer, naranja = se mantiene, rojo = baja peso. El ranking alimenta los pesos dinamicos de PolyTemp PREMIUM."
     ),
     DYNAMIC_WEIGHT(
         title = "Peso dinamico",

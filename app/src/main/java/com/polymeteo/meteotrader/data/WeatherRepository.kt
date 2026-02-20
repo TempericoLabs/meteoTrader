@@ -105,7 +105,10 @@ class WeatherRepository(
 
     suspend fun fetchCity(city: CityConfig): CityWeatherData = coroutineScope {
         val zoneId = ZoneId.of(city.zoneId)
+        val cityNow = Instant.now().atZone(zoneId)
         val cityToday = LocalDate.now(zoneId)
+        val cityLocalHour = cityNow.hour
+        val isClosedBySchedule = cityLocalHour >= CITY_MARKET_CUTOFF_HOUR
         val targetDates = listOf(cityToday, cityToday.plusDays(1), cityToday.plusDays(2))
 
         val metarDeferred = async { fetchMetarWithTimeout(city) }
@@ -211,12 +214,27 @@ class WeatherRepository(
             observedMaxC = observedMaxC,
             cityToday = cityToday
         )
+        val scheduleAwarePolymarket = if (isClosedBySchedule) {
+            polymarket.copy(
+                opportunities = emptyList(),
+                topOpportunity = null,
+                error = appendPolymarketError(
+                    polymarket.error,
+                    "CERRADO POR HORARIO (local >= ${CITY_MARKET_CUTOFF_HOUR}:00)"
+                )
+            )
+        } else {
+            polymarket
+        }
 
         val warnings = buildList {
             metar.error?.let { add("METAR: $it") }
             taf.error?.let { add("TAF: $it") }
             control.error?.let { add("Wunderground: $it") }
-            polymarket.error?.let { add("Polymarket: $it") }
+            scheduleAwarePolymarket.error?.let { add("Polymarket: $it") }
+            if (isClosedBySchedule) {
+                add("Ciudad cerrada por horario local (${cityNow.format(DateTimeFormatter.ofPattern("HH:mm", Locale.US))})")
+            }
             if (todayHorizon.polyTempInvalid && observedMaxC != null) {
                 add("PolyTEMP: invalido hoy (max observada ${String.format(Locale.US, "%.1f", observedMaxC)}°C)")
             }
@@ -244,6 +262,7 @@ class WeatherRepository(
         CityWeatherData(
             city = city,
             localTime = currentLocalTime(zoneId),
+            isClosedBySchedule = isClosedBySchedule,
             metar = metar,
             taf = taf,
             controlStation = control,
@@ -256,7 +275,7 @@ class WeatherRepository(
             polyTempPremiumC = todayHorizon.polyTempPremiumC,
             polyTempPremiumF = todayHorizon.polyTempPremiumF,
             polyTempPremiumInvalid = todayHorizon.polyTempPremiumInvalid,
-            polymarket = polymarket,
+            polymarket = scheduleAwarePolymarket,
             updatedAt = Instant.now(),
             warnings = warnings
         )
@@ -422,6 +441,14 @@ class WeatherRepository(
         )
     }
 
+    private fun appendPolymarketError(
+        baseError: String?,
+        extra: String
+    ): String {
+        if (baseError.isNullOrBlank()) return extra
+        return "$baseError | $extra"
+    }
+
     private fun isMarketStillPossibleForToday(
         condition: MarketRangeCondition,
         observedMaxC: Double
@@ -571,6 +598,7 @@ class WeatherRepository(
         private const val PREMIUM_TIMEOUT_MS = 5_000L
         private const val MIN_FORECASTS_FOR_HIGH_CONFIDENCE = 3
         private const val FORECAST_INVALID_EPSILON_C = 0.001
+        private const val CITY_MARKET_CUTOFF_HOUR = 18
         private val VALID_TEMP_RANGE_C = -80.0..65.0
 
         fun createDefault(context: Context? = null): WeatherRepository {

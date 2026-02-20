@@ -8,6 +8,7 @@ data class PolyTempPremiumModelStat(
     val providerName: String,
     val baseWeight: Double,
     val dynamicWeight: Double,
+    val previousDynamicWeight: Double?,
     val multiplier: Double,
     val verifiedDays: Int,
     val validForecastDays: Int,

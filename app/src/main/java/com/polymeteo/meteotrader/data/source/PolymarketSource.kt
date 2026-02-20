@@ -95,7 +95,7 @@ class PolymarketSource(
         }
 
         val marketWindow = parsedMarkets.filterByTargetDates(targetDates.toSet())
-        val opportunities = marketWindow
+        val evaluatedOpportunities = marketWindow
             .mapNotNull { market ->
                 val marketDate = market.condition.targetDate ?: today
                 val dayInput = modelInputsByDate[marketDate]
@@ -111,6 +111,11 @@ class PolymarketSource(
                     localHour = localHour
                 )
             }
+        val opportunities = applyRecommendationControls(
+            opportunities = evaluatedOpportunities,
+            cityToday = today,
+            localHour = localHour
+        )
             .sortedByDescending { it.executableEdge }
 
         val topToday = opportunities
@@ -122,8 +127,12 @@ class PolymarketSource(
             fetchedAt = Instant.now(),
             marketsScanned = parsedMarkets.size,
             opportunities = opportunities,
-            topOpportunity = topToday ?: opportunities.firstOrNull(),
-            error = if (opportunities.isEmpty()) "PolyTEMP no disponible para los mercados activos" else null
+            topOpportunity = topToday,
+            error = when {
+                evaluatedOpportunities.isEmpty() -> "PolyTEMP no disponible para los mercados activos"
+                opportunities.isEmpty() -> "Mercados descartados por control de ejecución (liquidez/costes/dominancia)"
+                else -> null
+            }
         )
     }
 
@@ -312,6 +321,7 @@ class PolymarketSource(
 
         val isActive = obj.booleanOrNull("active") ?: true
         val isClosed = obj.booleanOrNull("closed") ?: false
+        val acceptingOrders = obj.booleanOrNull("acceptingOrders") ?: true
         val umaResolutionStatus = obj.stringOrNull("umaResolutionStatus")?.lowercase(Locale.US)
         val closedTime = obj.stringOrNull("closedTime")
         val isResolved = umaResolutionStatus == "resolved" ||
@@ -321,6 +331,7 @@ class PolymarketSource(
         if (!allowClosed) {
             if (!isActive || isClosed) return null
             if (isResolved) return null
+            if (!acceptingOrders) return null
         }
 
         val condition = parseConditionFromQuestion(question, city.zoneId) ?: return null
@@ -352,6 +363,15 @@ class PolymarketSource(
             noPrice = (1.0 - yesPrice).coerceIn(0.001, 0.999)
         }
 
+        val bestBid = obj.doubleOrNull("bestBid")
+        val bestAsk = obj.doubleOrNull("bestAsk")
+        val rawSpread = obj.doubleOrNull("spread")
+        val inferredSpread = when {
+            rawSpread != null -> rawSpread
+            bestBid != null && bestAsk != null && bestAsk >= bestBid -> bestAsk - bestBid
+            else -> null
+        }
+
         return ParsedMarket(
             id = obj.stringOrNull("id") ?: "unknown",
             question = question,
@@ -359,9 +379,12 @@ class PolymarketSource(
             yesPrice = yesPrice,
             noPrice = noPrice,
             yesTokenId = yesTokenId,
+            acceptingOrders = acceptingOrders,
+            bestBid = bestBid,
+            bestAsk = bestAsk,
             liquidity = obj.doubleOrNull("liquidityNum") ?: obj.doubleOrNull("liquidity"),
             volume24h = obj.doubleOrNull("volume24hr") ?: obj.doubleOrNull("volume24hrClob"),
-            spread = obj.doubleOrNull("spread")
+            spread = inferredSpread
         )
     }
 
@@ -553,6 +576,66 @@ class PolymarketSource(
         return (thinBookPenalty + weakFlowPenalty + lowFillPenalty).coerceAtMost(0.09)
     }
 
+    private fun applyRecommendationControls(
+        opportunities: List<TraderOpportunity>,
+        cityToday: LocalDate,
+        localHour: Int
+    ): List<TraderOpportunity> {
+        if (opportunities.isEmpty()) return emptyList()
+        return opportunities
+            .groupBy { opportunity -> opportunity.condition.targetDate ?: cityToday }
+            .flatMap { (targetDate, dayMarkets) ->
+                if (isMarketDominated(dayMarkets, targetDate, cityToday, localHour)) {
+                    emptyList()
+                } else {
+                    val minEdgeForHour = when {
+                        targetDate == cityToday && localHour >= LATE_DAY_HOUR -> LATE_DAY_MIN_EXECUTABLE_EDGE
+                        else -> CONTROL_MIN_EXECUTABLE_EDGE
+                    }
+                    dayMarkets.filter { opportunity ->
+                        passesExecutionControl(
+                            opportunity = opportunity,
+                            minEdge = minEdgeForHour
+                        )
+                    }
+                }
+            }
+            .distinctBy { opportunity -> opportunity.marketId }
+    }
+
+    private fun isMarketDominated(
+        dayMarkets: List<TraderOpportunity>,
+        targetDate: LocalDate,
+        cityToday: LocalDate,
+        localHour: Int
+    ): Boolean {
+        if (targetDate != cityToday) return false
+        if (localHour < DOMINANCE_CHECK_HOUR) return false
+        val maxYesProbability = dayMarkets.maxOfOrNull { it.yesPrice } ?: return false
+        return maxYesProbability >= DOMINANCE_YES_THRESHOLD
+    }
+
+    private fun passesExecutionControl(
+        opportunity: TraderOpportunity,
+        minEdge: Double
+    ): Boolean {
+        if (!opportunity.shouldTrade) return false
+        val liquidity = (opportunity.liquidity ?: 0.0).coerceAtLeast(0.0)
+        val volume24h = (opportunity.volume24h ?: 0.0).coerceAtLeast(0.0)
+        val spread = (opportunity.spread ?: DEFAULT_SPREAD_ASSUMPTION).coerceAtLeast(0.0)
+        val selectedPrice = if (opportunity.recommendedBuy == "YES") opportunity.yesPrice else opportunity.noPrice
+
+        if (liquidity < CONTROL_MIN_LIQUIDITY) return false
+        if (volume24h < CONTROL_MIN_VOLUME_24H) return false
+        if (spread > CONTROL_MAX_SPREAD) return false
+        if (opportunity.totalCost > CONTROL_MAX_TOTAL_COST) return false
+        if (opportunity.fillProbability < CONTROL_MIN_FILL) return false
+        if (opportunity.executableEdge < minEdge) return false
+        if (selectedPrice !in CONTROL_MIN_ENTRY_PRICE..CONTROL_MAX_ENTRY_PRICE) return false
+
+        return true
+    }
+
     private fun logistic(x: Double): Double = 1.0 / (1.0 + exp(-x))
 
     private fun parseConditionFromQuestion(question: String, cityZoneId: String): MarketRangeCondition? {
@@ -735,6 +818,9 @@ class PolymarketSource(
         val yesPrice: Double,
         val noPrice: Double,
         val yesTokenId: String?,
+        val acceptingOrders: Boolean,
+        val bestBid: Double?,
+        val bestAsk: Double?,
         val liquidity: Double?,
         val volume24h: Double?,
         val spread: Double?
@@ -750,13 +836,27 @@ class PolymarketSource(
         const val DEFAULT_SPREAD_ASSUMPTION = 0.020
         const val MAX_TOTAL_EXECUTION_COST = 0.30
 
-        const val MIN_FILL_PROBABILITY_TO_TRADE = 0.45
-        const val MIN_EXECUTABLE_EDGE_TO_TRADE = 0.015
+        const val MIN_FILL_PROBABILITY_TO_TRADE = 0.50
+        const val MIN_EXECUTABLE_EDGE_TO_TRADE = 0.020
 
         const val GREEN_MIN_FILL_PROBABILITY = 0.65
         const val GREEN_EXECUTABLE_EDGE = 0.06
 
         const val YELLOW_MIN_FILL_PROBABILITY = 0.45
         const val YELLOW_EXECUTABLE_EDGE = 0.025
+
+        const val CONTROL_MIN_EXECUTABLE_EDGE = 0.025
+        const val CONTROL_MIN_FILL = 0.55
+        const val CONTROL_MIN_LIQUIDITY = 250.0
+        const val CONTROL_MIN_VOLUME_24H = 200.0
+        const val CONTROL_MAX_SPREAD = 0.12
+        const val CONTROL_MAX_TOTAL_COST = 0.22
+        const val CONTROL_MIN_ENTRY_PRICE = 0.02
+        const val CONTROL_MAX_ENTRY_PRICE = 0.90
+
+        const val LATE_DAY_HOUR = 15
+        const val LATE_DAY_MIN_EXECUTABLE_EDGE = 0.035
+        const val DOMINANCE_CHECK_HOUR = 13
+        const val DOMINANCE_YES_THRESHOLD = 0.95
     }
 }

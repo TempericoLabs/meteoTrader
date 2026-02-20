@@ -42,6 +42,9 @@ class PolyTempPremiumEngine(
         val warnings = mutableListOf<String>()
 
         var dataset = store.read()
+        val sanitized = sanitizeDeprecatedProviders(dataset)
+        dataset = sanitized.dataset
+        changed = changed || sanitized.changed
 
         val upsert = upsertSnapshots(
             dataset = dataset,
@@ -95,6 +98,10 @@ class PolyTempPremiumEngine(
         var changed = false
 
         var dataset = store.read()
+        val sanitized = sanitizeDeprecatedProviders(dataset)
+        dataset = sanitized.dataset
+        changed = changed || sanitized.changed
+
         val verified = verifyPendingDates(
             dataset = dataset,
             city = city,
@@ -121,7 +128,7 @@ class PolyTempPremiumEngine(
 
     suspend fun loadCityReport(city: CityConfig): PolyTempPremiumReport {
         val now = nowProvider()
-        val dataset = store.read()
+        val dataset = sanitizeDeprecatedProviders(store.read()).dataset
         return buildReport(
             dataset = dataset,
             city = city,
@@ -144,6 +151,9 @@ class PolyTempPremiumEngine(
         var changed = false
 
         for (forecast in forecasts) {
+            if (ForecastWeights.isDeprecatedProvider(forecast.sourceId, forecast.sourceName)) {
+                continue
+            }
             val sanitizedMax = forecast.maxTempC
                 ?.takeIf { forecast.status == SourceStatus.SUCCESS }
                 ?.takeIf { it in VALID_TEMP_RANGE_C }
@@ -296,6 +306,32 @@ class PolyTempPremiumEngine(
         )
     }
 
+    private fun sanitizeDeprecatedProviders(dataset: PolyTempPremiumDataset): DatasetMutation {
+        val snapshots = dataset.snapshots.filterNot { snapshot ->
+            ForecastWeights.isDeprecatedProvider(snapshot.providerId, snapshot.providerName)
+        }
+
+        val verifications = dataset.verifications.mapNotNull { verification ->
+            val entries = verification.entries.filterNot { entry ->
+                ForecastWeights.isDeprecatedProvider(entry.providerId, entry.providerName)
+            }
+            if (entries.isEmpty()) {
+                null
+            } else if (entries.size == verification.entries.size) {
+                verification
+            } else {
+                verification.copy(entries = entries)
+            }
+        }
+
+        val sanitized = dataset.copy(
+            snapshots = snapshots,
+            verifications = verifications
+        )
+        if (sanitized == dataset) return DatasetMutation(dataset, changed = false)
+        return DatasetMutation(sanitized, changed = true)
+    }
+
     private fun buildReport(
         dataset: PolyTempPremiumDataset,
         city: CityConfig,
@@ -328,12 +364,38 @@ class PolyTempPremiumEngine(
             }
         }
 
-        val ranking = buildProviderRanking(
+        val lastVerifiedDate = cityVerifications
+            .asSequence()
+            .mapNotNull { it.targetDateIso.toLocalDateOrNull() }
+            .maxOrNull()
+
+        val rankingToday = buildProviderRanking(
             providerIds = providerIds,
             verifications = cityVerifications,
             cityToday = cityToday,
             snapshots = citySnapshots
         )
+
+        val previousWeightsByProvider = if (lastVerifiedDate == null) {
+            emptyMap()
+        } else {
+            val previousVerifications = cityVerifications.filter { verification ->
+                val date = verification.targetDateIso.toLocalDateOrNull() ?: return@filter false
+                date.isBefore(lastVerifiedDate)
+            }
+            buildProviderRanking(
+                providerIds = providerIds,
+                verifications = previousVerifications,
+                cityToday = cityToday,
+                snapshots = citySnapshots
+            ).associate { stat ->
+                stat.providerId to stat.dynamicWeight
+            }
+        }
+
+        val ranking = rankingToday.map { stat ->
+            stat.copy(previousDynamicWeight = previousWeightsByProvider[stat.providerId])
+        }
 
         val dayVerifications = cityVerifications.mapNotNull { verification ->
             val targetDate = verification.targetDateIso.toLocalDateOrNull() ?: return@mapNotNull null
@@ -359,11 +421,6 @@ class PolyTempPremiumEngine(
         }
 
         val dynamicWeights = ranking.associate { it.providerId to it.dynamicWeight }
-
-        val lastVerifiedDate = cityVerifications
-            .asSequence()
-            .mapNotNull { it.targetDateIso.toLocalDateOrNull() }
-            .maxOrNull()
 
         return PolyTempPremiumReport(
             cityId = city.id,
@@ -483,6 +540,7 @@ class PolyTempPremiumEngine(
                     providerName = item.providerName,
                     baseWeight = item.baseWeight,
                     dynamicWeight = dynamicWeight,
+                    previousDynamicWeight = null,
                     multiplier = multiplier,
                     verifiedDays = item.verifiedDays,
                     validForecastDays = item.validForecastDays,
