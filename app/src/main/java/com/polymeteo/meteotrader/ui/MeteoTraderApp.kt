@@ -75,6 +75,7 @@ fun MeteoTraderApp(
             CityDetailScreen(
                 cityData = uiState.cities.firstOrNull { it.city.id == cityId },
                 globalError = uiState.errorMessage,
+                isPremiumCalibrating = uiState.premiumRefreshingCityIds.contains(cityId),
                 onBack = { navController.popBackStack() },
                 onRefresh = { viewModel.refreshCity(cityId) },
                 onOpenPolyTempPremium = {

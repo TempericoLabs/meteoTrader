@@ -129,7 +129,7 @@ class PolymarketSource(
             opportunities = opportunities,
             topOpportunity = topToday,
             error = when {
-                evaluatedOpportunities.isEmpty() -> "PolyTEMP no disponible para los mercados activos"
+                evaluatedOpportunities.isEmpty() -> "Media Modelos (MM/MMA) no disponible para los mercados activos"
                 opportunities.isEmpty() -> "Mercados descartados por control de ejecución (liquidez/costes/dominancia)"
                 else -> null
             }

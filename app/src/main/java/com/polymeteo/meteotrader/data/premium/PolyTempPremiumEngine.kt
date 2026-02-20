@@ -28,6 +28,8 @@ data class PremiumWeightSnapshot(
     val weightsByProviderId: Map<String, Double>,
     val verifiedDays: Int,
     val lastVerifiedDate: LocalDate?,
+    val calibrationReady: Boolean,
+    val calibrationProgress: Double,
     val warnings: List<String>
 )
 
@@ -95,11 +97,26 @@ class PolyTempPremiumEngine(
             providerIds = providerIds,
             cityToday = cityToday
         )
+        val bootstrapProgress = buildBootstrapProgress(
+            dataset = dataset,
+            city = city,
+            cityToday = cityToday
+        )
+        val targetBootstrap = bootstrapProgress.firstOrNull { item ->
+            item.horizonDays == targetHorizonDays
+        }
+        val targetProgress = when {
+            targetBootstrap == null -> 0.0
+            targetBootstrap.totalDays <= 0 -> 1.0
+            else -> targetBootstrap.processedDays.toDouble() / targetBootstrap.totalDays.toDouble()
+        }.coerceIn(0.0, 1.0)
 
         PremiumWeightSnapshot(
             weightsByProviderId = resolution.weightsByProviderId,
             verifiedDays = resolution.verifiedDays,
             lastVerifiedDate = resolution.lastVerifiedDate,
+            calibrationReady = targetBootstrap?.completed == true || targetProgress >= 1.0,
+            calibrationProgress = targetProgress,
             warnings = (verified.warnings + resolution.warnings).distinct()
         )
     }
@@ -118,8 +135,9 @@ class PolyTempPremiumEngine(
             dataset = dataset,
             city = city,
             now = now,
-            chunkDays = BOOTSTRAP_CHUNK_DAYS_REPORT,
-            bypassCooldown = true
+            chunkDays = BOOTSTRAP_CHUNK_DAYS_FULL,
+            bypassCooldown = true,
+            runToCompletion = true
         )
         dataset = bootstrap.dataset
         changed = changed || bootstrap.changed
@@ -165,7 +183,8 @@ class PolyTempPremiumEngine(
             city = city,
             now = now,
             chunkDays = BOOTSTRAP_CHUNK_DAYS_LOAD,
-            bypassCooldown = false
+            bypassCooldown = false,
+            runToCompletion = false
         )
         dataset = bootstrap.dataset
         changed = changed || bootstrap.changed
@@ -376,7 +395,8 @@ class PolyTempPremiumEngine(
         city: CityConfig,
         now: Instant,
         chunkDays: Long,
-        bypassCooldown: Boolean
+        bypassCooldown: Boolean,
+        runToCompletion: Boolean
     ): BootstrapMutation {
         val zoneId = ZoneId.of(city.zoneId)
         val cityToday = LocalDate.now(zoneId)
@@ -401,129 +421,131 @@ class PolyTempPremiumEngine(
 
         for (horizonDays in BOOTSTRAP_HORIZONS) {
             val key = cursorKey(city.id, horizonDays)
-            val existingCursor = cursorsByKey[key]
             val defaultStart = defaultBootstrapStartForHorizon(horizonDays)
-            val cursor = existingCursor ?: PolyTempPremiumBootstrapCursor(
+            var cursor = cursorsByKey[key] ?: PolyTempPremiumBootstrapCursor(
                 cityId = city.id,
                 horizonDays = horizonDays,
                 nextDateIso = defaultStart.toString(),
                 completed = false
             )
 
-            if (cursor.completed) {
-                if (existingCursor == null) {
-                    cursorsByKey[key] = cursor
-                    changed = true
-                }
-                continue
-            }
-
             if (!bypassCooldown && cursor.lastAttemptEpochMs > 0L && (nowMs - cursor.lastAttemptEpochMs) < BOOTSTRAP_MIN_INTERVAL_MS) {
                 cursorsByKey[key] = cursor
-                if (existingCursor == null) changed = true
                 continue
             }
 
-            val startDate = cursor.nextDateIso.toLocalDateOrNull() ?: defaultStart
-            if (startDate.isAfter(bootstrapEnd)) {
-                val doneCursor = cursor.copy(
-                    nextDateIso = startDate.toString(),
-                    completed = true,
-                    lastAttemptEpochMs = nowMs,
-                    lastSuccessEpochMs = maxOf(cursor.lastSuccessEpochMs, nowMs),
-                    lastError = null
-                )
-                if (doneCursor != existingCursor) {
-                    cursorsByKey[key] = doneCursor
-                    changed = true
-                }
-                continue
-            }
-
-            val chunkEnd = minOf(startDate.plusDays(chunkDays - 1), bootstrapEnd)
-            val forecasts = openMeteoHistoricalSource.fetchForecastDailyMaxBatch(
-                city = city,
-                startDate = startDate,
-                endDate = chunkEnd,
-                models = CALIBRATION_MODELS,
-                horizonDays = horizonDays
-            )
-            warnings += forecasts.warnings.map { warning -> "${city.name} H$horizonDays: $warning" }
-
-            val observedLoad = resolveObservedSeriesForRange(
-                city = city,
-                startDate = startDate,
-                endDate = chunkEnd,
-                cityToday = cityToday,
-                observedCache = observedCache
-            )
-            warnings += observedLoad.warnings
-            observedCache.putAll(observedLoad.valuesByDate)
-
-            var inserted = 0
-            var date = startDate
-            while (!date.isAfter(chunkEnd)) {
-                val observed = observedLoad.valuesByDate[date] ?: observedCache[date]
-                if (observed != null && observed.tempC in VALID_TEMP_RANGE_C) {
-                    val entries = CALIBRATION_MODELS.map { model ->
-                        val forecastMax = forecasts.valuesByProvider[model.providerId]?.get(date)
-                        val validForecast = forecastMax != null && forecastMax in VALID_TEMP_RANGE_C
-                        val absError = if (validForecast) abs(forecastMax!! - observed.tempC) else null
-                        val squared = absError?.let { it * it }
-                        PolyTempPremiumVerificationEntry(
-                            providerId = model.providerId,
-                            providerName = model.providerName,
-                            capturedEpochMs = nowMs,
-                            status = if (validForecast) SourceStatus.SUCCESS.name else SourceStatus.SKIPPED.name,
-                            forecastMaxC = forecastMax,
-                            absoluteErrorC = absError,
-                            squaredErrorC = squared,
-                            errorMessage = if (validForecast) null else "Sin forecast histórico"
-                        )
+            var startDate = cursor.nextDateIso.toLocalDateOrNull() ?: defaultStart
+            var chunksProcessed = 0
+            while (true) {
+                if (startDate.isAfter(bootstrapEnd)) {
+                    val doneCursor = cursor.copy(
+                        nextDateIso = startDate.toString(),
+                        completed = true,
+                        lastAttemptEpochMs = nowMs,
+                        lastSuccessEpochMs = maxOf(cursor.lastSuccessEpochMs, nowMs),
+                        lastError = null
+                    )
+                    if (doneCursor != cursorsByKey[key]) {
+                        cursorsByKey[key] = doneCursor
+                        changed = true
                     }
+                    break
+                }
 
-                    if (entries.any { it.absoluteErrorC != null }) {
-                        val candidate = PolyTempPremiumVerificationRecord(
-                            cityId = city.id,
-                            cityName = city.name,
-                            cityZoneId = city.zoneId,
-                            targetDateIso = date.toString(),
-                            horizonDays = horizonDays,
-                            observedMaxC = observed.tempC,
-                            observedSourceUrl = observed.sourceUrl,
-                            verifiedAtEpochMs = nowMs,
-                            entries = entries
-                        )
-                        val verificationKey = verificationKey(city.id, date.toString(), horizonDays)
-                        val previous = verificationsByKey[verificationKey]
-                        if (shouldReplaceVerification(previous, candidate)) {
-                            verificationsByKey[verificationKey] = candidate
-                            inserted += 1
-                            changed = true
+                val chunkEnd = minOf(startDate.plusDays(chunkDays - 1), bootstrapEnd)
+                val forecasts = openMeteoHistoricalSource.fetchForecastDailyMaxBatch(
+                    city = city,
+                    startDate = startDate,
+                    endDate = chunkEnd,
+                    models = CALIBRATION_MODELS,
+                    horizonDays = horizonDays
+                )
+                warnings += forecasts.warnings.map { warning -> "${city.name} H$horizonDays: $warning" }
+
+                val observedLoad = resolveObservedSeriesForRange(
+                    city = city,
+                    startDate = startDate,
+                    endDate = chunkEnd,
+                    cityToday = cityToday,
+                    observedCache = observedCache
+                )
+                warnings += observedLoad.warnings
+                observedCache.putAll(observedLoad.valuesByDate)
+
+                var inserted = 0
+                var date = startDate
+                while (!date.isAfter(chunkEnd)) {
+                    val observed = observedLoad.valuesByDate[date] ?: observedCache[date]
+                    if (observed != null && observed.tempC in VALID_TEMP_RANGE_C) {
+                        val entries = CALIBRATION_MODELS.map { model ->
+                            val forecastMax = forecasts.valuesByProvider[model.providerId]?.get(date)
+                            val validForecast = forecastMax != null && forecastMax in VALID_TEMP_RANGE_C
+                            val absError = if (validForecast) abs(forecastMax!! - observed.tempC) else null
+                            val squared = absError?.let { it * it }
+                            PolyTempPremiumVerificationEntry(
+                                providerId = model.providerId,
+                                providerName = model.providerName,
+                                capturedEpochMs = nowMs,
+                                status = if (validForecast) SourceStatus.SUCCESS.name else SourceStatus.SKIPPED.name,
+                                forecastMaxC = forecastMax,
+                                absoluteErrorC = absError,
+                                squaredErrorC = squared,
+                                errorMessage = if (validForecast) null else "Sin forecast histórico"
+                            )
+                        }
+
+                        if (entries.any { it.absoluteErrorC != null }) {
+                            val candidate = PolyTempPremiumVerificationRecord(
+                                cityId = city.id,
+                                cityName = city.name,
+                                cityZoneId = city.zoneId,
+                                targetDateIso = date.toString(),
+                                horizonDays = horizonDays,
+                                observedMaxC = observed.tempC,
+                                observedSourceUrl = observed.sourceUrl,
+                                verifiedAtEpochMs = nowMs,
+                                entries = entries
+                            )
+                            val verificationKey = verificationKey(city.id, date.toString(), horizonDays)
+                            val previous = verificationsByKey[verificationKey]
+                            if (shouldReplaceVerification(previous, candidate)) {
+                                verificationsByKey[verificationKey] = candidate
+                                inserted += 1
+                                changed = true
+                            }
                         }
                     }
+                    date = date.plusDays(1)
                 }
-                date = date.plusDays(1)
-            }
 
-            val dataAvailable = forecasts.valuesByProvider.values.any { it.isNotEmpty() }
-            val nextCursor = if (dataAvailable) {
-                cursor.copy(
-                    nextDateIso = chunkEnd.plusDays(1).toString(),
-                    completed = !chunkEnd.plusDays(1).isBefore(bootstrapEnd.plusDays(1)),
+                val dataAvailable = forecasts.valuesByProvider.values.any { it.isNotEmpty() }
+                val nextDate = if (dataAvailable) chunkEnd.plusDays(1) else startDate
+                val nextCursor = cursor.copy(
+                    nextDateIso = nextDate.toString(),
+                    completed = nextDate.isAfter(bootstrapEnd),
                     lastAttemptEpochMs = nowMs,
                     lastSuccessEpochMs = if (inserted > 0) nowMs else cursor.lastSuccessEpochMs,
-                    lastError = if (inserted > 0) null else "Sin verificaciones nuevas en tramo"
+                    lastError = when {
+                        !dataAvailable -> "Sin forecasts históricos en tramo"
+                        inserted > 0 -> null
+                        else -> "Sin verificaciones nuevas en tramo"
+                    }
                 )
-            } else {
-                cursor.copy(
-                    lastAttemptEpochMs = nowMs,
-                    lastError = "Sin forecasts históricos en tramo"
-                )
-            }
-            if (nextCursor != existingCursor) {
-                cursorsByKey[key] = nextCursor
-                changed = true
+                if (nextCursor != cursorsByKey[key]) {
+                    cursorsByKey[key] = nextCursor
+                    changed = true
+                }
+                cursor = nextCursor
+
+                if (!runToCompletion || !dataAvailable || nextDate.isAfter(bootstrapEnd)) {
+                    break
+                }
+                chunksProcessed += 1
+                if (chunksProcessed >= MAX_FULL_BOOTSTRAP_CHUNKS_PER_HORIZON) {
+                    warnings += "${city.name} H$horizonDays: límite de chunks alcanzado en refresh completo"
+                    break
+                }
+                startDate = nextDate
             }
         }
 
@@ -779,7 +801,54 @@ class PolyTempPremiumEngine(
             snapshots = horizonSnapshots
         )
 
-        val dynamicWeights = ranking.associate { it.providerId to it.dynamicWeight }
+        val primaryMultipliers = ranking.associate { stat -> stat.providerId to stat.multiplier }
+        val primaryVerifiedDays = horizonVerifications.size
+        val primaryBlendConfidence = confidenceWeight(
+            days = primaryVerifiedDays,
+            fullConfidenceDays = PRIMARY_HORIZON_FULL_CONFIDENCE_DAYS
+        )
+
+        val crossHorizonSources = BOOTSTRAP_HORIZONS
+            .asSequence()
+            .filter { candidate -> candidate != horizonDays }
+            .mapNotNull { candidate ->
+                val candidateVerifications = dataset.verifications
+                    .filter { it.cityId == city.id && it.horizonDays == candidate }
+                    .sortedByDescending { it.targetDateIso }
+                if (candidateVerifications.isEmpty()) return@mapNotNull null
+
+                val candidateSnapshots = dataset.snapshots
+                    .filter { it.cityId == city.id && it.horizonDays == candidate }
+                val candidateRanking = buildProviderRanking(
+                    providerIds = providerIds,
+                    verifications = candidateVerifications,
+                    cityToday = cityToday,
+                    snapshots = candidateSnapshots
+                )
+                if (candidateRanking.isEmpty()) return@mapNotNull null
+
+                HorizonBlendSource(
+                    horizonDays = candidate,
+                    verifiedDays = candidateVerifications.size,
+                    multipliersByProvider = candidateRanking.associate { stat ->
+                        stat.providerId to stat.multiplier
+                    }
+                )
+            }
+            .toList()
+
+        val dynamicWeights = providerIds.associateWith { providerId ->
+            val baseWeight = ForecastWeights.baseWeightFor(providerId)
+            val primaryMultiplier = primaryMultipliers[providerId] ?: NO_DATA_MULTIPLIER
+            val blendedMultiplier = blendMultiplierWithCrossHorizon(
+                providerId = providerId,
+                horizonDays = horizonDays,
+                primaryMultiplier = primaryMultiplier,
+                primaryBlendConfidence = primaryBlendConfidence,
+                crossHorizonSources = crossHorizonSources
+            )
+            baseWeight * blendedMultiplier
+        }
         val weightsByProvider = providerIds.associateWith { providerId ->
             dynamicWeights[providerId] ?: ForecastWeights.baseWeightFor(providerId)
         }
@@ -791,7 +860,22 @@ class PolyTempPremiumEngine(
 
         val warnings = buildList {
             if (horizonVerifications.size < MIN_VERIFIED_DAYS_FOR_STABLE_WEIGHTS) {
-                add("PolyTEMP PREMIUM H$horizonDays: muestra corta (${horizonVerifications.size} días)")
+                add("MMA H$horizonDays: muestra corta (${horizonVerifications.size} días)")
+            }
+            if (
+                crossHorizonSources.isNotEmpty() &&
+                primaryBlendConfidence < 1.0 &&
+                horizonVerifications.size < CROSS_HORIZON_BLEND_WARNING_THRESHOLD_DAYS
+            ) {
+                val sourceText = crossHorizonSources
+                    .sortedByDescending { source -> source.verifiedDays }
+                    .joinToString(", ") { source ->
+                        "H${source.horizonDays}:${source.verifiedDays}d"
+                    }
+                add(
+                    "MMA H$horizonDays: transferencia entre horizontes activa " +
+                        "(base H$horizonDays=${horizonVerifications.size}d, apoyo $sourceText)"
+                )
             }
         }
 
@@ -801,6 +885,47 @@ class PolyTempPremiumEngine(
             lastVerifiedDate = lastVerifiedDate,
             warnings = warnings
         )
+    }
+
+    private fun blendMultiplierWithCrossHorizon(
+        providerId: String,
+        horizonDays: Int,
+        primaryMultiplier: Double,
+        primaryBlendConfidence: Double,
+        crossHorizonSources: List<HorizonBlendSource>
+    ): Double {
+        if (crossHorizonSources.isEmpty() || primaryBlendConfidence >= 1.0) {
+            return primaryMultiplier.coerceIn(MIN_MULTIPLIER, MAX_MULTIPLIER)
+        }
+
+        var weightedSum = 0.0
+        var totalWeight = 0.0
+        for (source in crossHorizonSources) {
+            val sourceMultiplier = source.multipliersByProvider[providerId] ?: continue
+            val distance = abs(source.horizonDays - horizonDays)
+            val proximityWeight = when (distance) {
+                1 -> CROSS_HORIZON_DISTANCE_ONE_WEIGHT
+                2 -> CROSS_HORIZON_DISTANCE_TWO_WEIGHT
+                else -> CROSS_HORIZON_DISTANCE_OTHER_WEIGHT
+            }
+            val sampleConfidence = confidenceWeight(
+                days = source.verifiedDays,
+                fullConfidenceDays = CROSS_HORIZON_FULL_CONFIDENCE_DAYS
+            )
+            val weight = proximityWeight * sampleConfidence
+            if (weight <= 0.0) continue
+            weightedSum += sourceMultiplier * weight
+            totalWeight += weight
+        }
+
+        if (totalWeight <= 0.0) {
+            return primaryMultiplier.coerceIn(MIN_MULTIPLIER, MAX_MULTIPLIER)
+        }
+
+        val fallbackMultiplier = weightedSum / totalWeight
+        val primaryWeight = maxOf(primaryBlendConfidence, CROSS_HORIZON_MIN_PRIMARY_BLEND)
+        val blended = primaryMultiplier * primaryWeight + fallbackMultiplier * (1.0 - primaryWeight)
+        return blended.coerceIn(MIN_MULTIPLIER, MAX_MULTIPLIER)
     }
 
     private fun pruneDataset(dataset: PolyTempPremiumDataset): DatasetMutation {
@@ -1403,6 +1528,12 @@ class PolyTempPremiumEngine(
         }
     }
 
+    private data class HorizonBlendSource(
+        val horizonDays: Int,
+        val verifiedDays: Int,
+        val multipliersByProvider: Map<String, Double>
+    )
+
     companion object {
         private const val MAX_HORIZON_DAYS = 2
         private const val REPORT_HORIZON_DAYS = 0
@@ -1413,7 +1544,8 @@ class PolyTempPremiumEngine(
         private const val MAX_VERIFY_DATES_PER_RUN = 4
 
         private const val BOOTSTRAP_CHUNK_DAYS_LOAD = 10L
-        private const val BOOTSTRAP_CHUNK_DAYS_REPORT = 28L
+        private const val BOOTSTRAP_CHUNK_DAYS_FULL = 120L
+        private const val MAX_FULL_BOOTSTRAP_CHUNKS_PER_HORIZON = 60
         private const val BOOTSTRAP_MIN_INTERVAL_MS = 35L * 60L * 1000L
 
         private const val WUNDERGROUND_LOOKBACK_DAYS = 45L
@@ -1429,6 +1561,13 @@ class PolyTempPremiumEngine(
         private const val RECENT_DAYS_FOR_FULL_CONFIDENCE = 14.0
         private const val SEASONAL_DAYS_FOR_FULL_CONFIDENCE = 45.0
         private const val LONG_DAYS_FOR_FULL_CONFIDENCE = 180.0
+        private const val PRIMARY_HORIZON_FULL_CONFIDENCE_DAYS = 30.0
+        private const val CROSS_HORIZON_FULL_CONFIDENCE_DAYS = 90.0
+        private const val CROSS_HORIZON_MIN_PRIMARY_BLEND = 0.30
+        private const val CROSS_HORIZON_DISTANCE_ONE_WEIGHT = 1.00
+        private const val CROSS_HORIZON_DISTANCE_TWO_WEIGHT = 0.72
+        private const val CROSS_HORIZON_DISTANCE_OTHER_WEIGHT = 0.50
+        private const val CROSS_HORIZON_BLEND_WARNING_THRESHOLD_DAYS = 28
 
         private const val BLEND_WEIGHT_RECENCY = 0.55
         private const val BLEND_WEIGHT_SEASONAL = 0.30

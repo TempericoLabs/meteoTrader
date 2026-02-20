@@ -95,7 +95,8 @@ data class ForecastHorizonData(
     val polyTempInvalid: Boolean,
     val polyTempPremiumC: Double?,
     val polyTempPremiumF: Double?,
-    val polyTempPremiumInvalid: Boolean
+    val polyTempPremiumInvalid: Boolean,
+    val polyTempPremiumReady: Boolean
 )
 
 data class MarketRangeCondition(
@@ -156,6 +157,7 @@ data class CityWeatherData(
     val polyTempPremiumC: Double?,
     val polyTempPremiumF: Double?,
     val polyTempPremiumInvalid: Boolean,
+    val polyTempPremiumReady: Boolean,
     val polymarket: PolymarketSnapshot,
     val updatedAt: Instant,
     val warnings: List<String>

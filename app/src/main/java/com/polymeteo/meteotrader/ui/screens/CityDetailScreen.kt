@@ -79,6 +79,7 @@ import java.time.ZoneId
 fun CityDetailScreen(
     cityData: CityWeatherData?,
     globalError: String?,
+    isPremiumCalibrating: Boolean,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onOpenPolyTempPremium: () -> Unit
@@ -178,17 +179,32 @@ fun CityDetailScreen(
             )
             val observedMaxInDisplayUnit = cityData.observedMaxInUnit()
             val polyTempInvalid = selectedHorizon?.polyTempInvalid == true
+            val polyTempPremiumReady = selectedHorizon?.polyTempPremiumReady == true
             val polyTempPremiumInvalid = selectedHorizon?.polyTempPremiumInvalid == true
+            val activeModelUsesPremium = polyTempPremiumReady && !isPremiumCalibrating
+            val activeModelInvalid = if (activeModelUsesPremium) {
+                polyTempPremiumInvalid
+            } else {
+                polyTempInvalid
+            }
             val polyDisplayColor = if (polyTempInvalid) Negative else Positive
-            val polyPremiumDisplayColor = if (polyTempPremiumInvalid) Negative else Positive
+            val polyPremiumDisplayColor = when {
+                !polyTempPremiumReady || isPremiumCalibrating -> MutedInk
+                polyTempPremiumInvalid -> Negative
+                else -> Positive
+            }
             val polyDisplayValue = appendForecastInvalidSuffix(
                 temperature = polyWithSecondaryUnit,
                 invalid = polyTempInvalid
             )
-            val polyPremiumDisplayValue = appendForecastInvalidSuffix(
-                temperature = polyPremiumWithSecondaryUnit,
-                invalid = polyTempPremiumInvalid
-            )
+            val polyPremiumDisplayValue = if (!polyTempPremiumReady || isPremiumCalibrating) {
+                "CALCULANDO..."
+            } else {
+                appendForecastInvalidSuffix(
+                    temperature = polyPremiumWithSecondaryUnit,
+                    invalid = polyTempPremiumInvalid
+                )
+            }
             val observedMaxLabel = formatTemperature(observedMaxInDisplayUnit, unit)
             val metarActualValue = if (isTodayTab) {
                 appendObservationTime(
@@ -253,7 +269,7 @@ fun CityDetailScreen(
                         DetailPair("Diferencia", metarDeltaValue)
                         DetailPair("Temp estación control", controlWithSecondaryUnit)
                         DetailPair(
-                            label = "PolyTEMP",
+                            label = "Media Modelos (MM)",
                             value = polyDisplayValue,
                             labelColor = polyDisplayColor,
                             valueColor = polyDisplayColor,
@@ -264,9 +280,9 @@ fun CityDetailScreen(
                             valueColor = polyPremiumDisplayColor,
                             onClick = onOpenPolyTempPremium
                         )
-                        if (polyTempInvalid || polyTempPremiumInvalid) {
+                        if (activeModelInvalid) {
                             Text(
-                                text = "Modelo invalidado hoy: ya se observo ${observedMaxLabel} en la ciudad.",
+                                text = "Modelo activo invalidado hoy: ya se observo ${observedMaxLabel} en la ciudad.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Negative,
                                 modifier = Modifier.padding(top = 4.dp)
@@ -485,15 +501,13 @@ private fun PolyTempPremiumLink(
     valueColor: Color,
     onClick: () -> Unit
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+            .padding(top = 8.dp)
     ) {
         Text(
-            text = "PolyTemp PREMIUM",
+            text = "Media Modelos Ajustada (MMA)",
             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
             color = Color(0xFF8FC8FF),
             textDecoration = TextDecoration.Underline,
@@ -504,7 +518,9 @@ private fun PolyTempPremiumLink(
             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
             color = valueColor,
             textDecoration = TextDecoration.Underline,
-            modifier = Modifier.clickable { onClick() }
+            modifier = Modifier
+                .padding(top = 2.dp)
+                .clickable { onClick() }
         )
     }
 }
@@ -1173,11 +1189,11 @@ private enum class TraderHelpTopic(
 ) {
     OVER(
         title = "OVER",
-        message = "OVER significa que compras la idea de que la maxima final quedara por encima del nivel del mercado. Sirve cuando PolyTEMP y varios modelos apuntan claramente arriba."
+        message = "OVER significa que compras la idea de que la maxima final quedara por encima del nivel del mercado. Sirve cuando la Media Modelos (MM) y varios modelos apuntan claramente arriba."
     ),
     UNDER(
         title = "UNDER",
-        message = "UNDER significa que esperas una maxima final por debajo del nivel del mercado. Es mas solido cuando PolyTEMP y datos actuales se mantienen por debajo con margen."
+        message = "UNDER significa que esperas una maxima final por debajo del nivel del mercado. Es mas solido cuando la Media Modelos (MM) y datos actuales se mantienen por debajo con margen."
     ),
     RANGE(
         title = "RANGE",

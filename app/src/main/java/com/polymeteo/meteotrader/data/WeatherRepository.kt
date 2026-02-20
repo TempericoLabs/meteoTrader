@@ -152,12 +152,18 @@ class WeatherRepository(
             )
             val isToday = targetDate == cityToday
             val polyTempC = baseComputation.polyTempC
-            val polyTempPremiumC = premiumComputation.polyTempC ?: baseComputation.polyTempC
+            val polyTempPremiumReady = premiumWeights.calibrationReady && premiumComputation.polyTempC != null
+            val polyTempPremiumC = if (polyTempPremiumReady) {
+                premiumComputation.polyTempC ?: baseComputation.polyTempC
+            } else {
+                null
+            }
             val polyTempInvalid = isToday && isForecastInvalidForToday(
                 forecastTempC = polyTempC,
                 observedMaxC = observedMaxC
             )
-            val polyTempPremiumInvalid = isToday && isForecastInvalidForToday(
+            val polyTempPremiumInvalid = polyTempPremiumReady &&
+                isToday && isForecastInvalidForToday(
                 forecastTempC = polyTempPremiumC,
                 observedMaxC = observedMaxC
             )
@@ -173,7 +179,8 @@ class WeatherRepository(
                 polyTempInvalid = polyTempInvalid,
                 polyTempPremiumC = polyTempPremiumC,
                 polyTempPremiumF = polyTempPremiumC?.let(::celsiusToFahrenheit),
-                polyTempPremiumInvalid = polyTempPremiumInvalid
+                polyTempPremiumInvalid = polyTempPremiumInvalid,
+                polyTempPremiumReady = polyTempPremiumReady
             )
         }
 
@@ -182,8 +189,12 @@ class WeatherRepository(
             val horizon = horizonData.first { it.targetDate == targetDate }
             val baseComputation = baseComputationByDate[targetDate] ?: PolyTempComputation(null, emptyList(), emptyList())
             val premiumComputation = premiumComputationByDate[targetDate] ?: PolyTempComputation(null, emptyList(), emptyList())
-            val rawPolyTempC = horizon.polyTempPremiumC ?: horizon.polyTempC
-            val rawForecastMaxTempsC = if (premiumComputation.validMaxTempsC.isNotEmpty()) {
+            val rawPolyTempC = if (horizon.polyTempPremiumReady) {
+                horizon.polyTempPremiumC ?: horizon.polyTempC
+            } else {
+                horizon.polyTempC
+            }
+            val rawForecastMaxTempsC = if (horizon.polyTempPremiumReady && premiumComputation.validMaxTempsC.isNotEmpty()) {
                 premiumComputation.validMaxTempsC
             } else {
                 baseComputation.validMaxTempsC
@@ -237,11 +248,21 @@ class WeatherRepository(
             if (isClosedBySchedule) {
                 add("Ciudad cerrada por horario local (${cityNow.format(DateTimeFormatter.ofPattern("HH:mm", Locale.US))})")
             }
-            if (todayHorizon.polyTempInvalid && observedMaxC != null) {
-                add("PolyTEMP: invalido hoy (max observada ${String.format(Locale.US, "%.1f", observedMaxC)}°C)")
-            }
-            if (todayHorizon.polyTempPremiumInvalid && observedMaxC != null) {
-                add("PolyTEMP PREMIUM: invalido hoy (max observada ${String.format(Locale.US, "%.1f", observedMaxC)}°C)")
+            if (observedMaxC != null) {
+                val activeUsesPremium = todayHorizon.polyTempPremiumReady
+                val activeInvalid = if (activeUsesPremium) {
+                    todayHorizon.polyTempPremiumInvalid
+                } else {
+                    todayHorizon.polyTempInvalid
+                }
+                if (activeInvalid) {
+                    val activeLabel = if (activeUsesPremium) {
+                        "Media Modelos Ajustada (MMA)"
+                    } else {
+                        "Media Modelos (MM)"
+                    }
+                    add("$activeLabel: invalido hoy (max observada ${String.format(Locale.US, "%.1f", observedMaxC)}°C)")
+                }
             }
             targetDates.forEach { targetDate ->
                 val label = horizonLabel(targetDate, cityToday)
@@ -252,7 +273,13 @@ class WeatherRepository(
                 val baseWarnings = baseComputationByDate[targetDate]?.warnings.orEmpty()
                 val premiumWarnings = premiumComputationByDate[targetDate]
                     ?.warnings
-                    ?.map { warning -> warning.replace("PolyTEMP", "PolyTEMP PREMIUM") }
+                    ?.map { warning ->
+                        if (warning.startsWith("MM:")) {
+                            warning.replaceFirst("MM:", "MMA:")
+                        } else {
+                            warning
+                        }
+                    }
                     .orEmpty()
                 val premiumWeightWarnings = premiumWeightsByDate[targetDate]?.warnings.orEmpty()
                 baseWarnings.forEach { warning -> add("$label $warning") }
@@ -277,6 +304,7 @@ class WeatherRepository(
             polyTempPremiumC = todayHorizon.polyTempPremiumC,
             polyTempPremiumF = todayHorizon.polyTempPremiumF,
             polyTempPremiumInvalid = todayHorizon.polyTempPremiumInvalid,
+            polyTempPremiumReady = todayHorizon.polyTempPremiumReady,
             polymarket = scheduleAwarePolymarket,
             updatedAt = Instant.now(),
             warnings = warnings
@@ -480,6 +508,8 @@ class WeatherRepository(
             weightsByProviderId = emptyMap(),
             verifiedDays = 0,
             lastVerifiedDate = null,
+            calibrationReady = false,
+            calibrationProgress = 0.0,
             warnings = emptyList()
         )
         return withTimeoutOrNull(PREMIUM_TIMEOUT_MS) {
@@ -492,7 +522,9 @@ class WeatherRepository(
             weightsByProviderId = emptyMap(),
             verifiedDays = 0,
             lastVerifiedDate = null,
-            warnings = listOf("PolyTEMP PREMIUM: timeout del motor de verificación")
+            calibrationReady = false,
+            calibrationProgress = 0.0,
+            warnings = listOf("MMA: timeout del motor de verificación")
         )
     }
 
@@ -514,7 +546,7 @@ class WeatherRepository(
             return PolyTempComputation(
                 polyTempC = null,
                 validMaxTempsC = emptyList(),
-                warnings = listOf("PolyTEMP: sin fuentes válidas")
+                warnings = listOf("MM: sin fuentes válidas")
             )
         }
 
@@ -534,13 +566,13 @@ class WeatherRepository(
         val warnings = buildList {
             val outliers = candidates.size - filtered.size
             if (outliers > 0) {
-                add("PolyTEMP: descartados $outliers outliers")
+                add("MM: descartados $outliers outliers")
             }
             if (filtered.size < MIN_FORECASTS_FOR_HIGH_CONFIDENCE) {
-                add("PolyTEMP: baja confianza (${filtered.size} fuentes)")
+                add("MM: baja confianza (${filtered.size} fuentes)")
             }
             if (spread > 5.5) {
-                add("PolyTEMP: alta dispersión (${String.format(Locale.US, "%.1f", spread)}°C)")
+                add("MM: alta dispersión (${String.format(Locale.US, "%.1f", spread)}°C)")
             }
         }
 
@@ -552,19 +584,49 @@ class WeatherRepository(
     }
 
     private fun List<SourceTemp>.weightedAverage(dynamicWeights: Map<String, Double>): Double {
-        var weightedSum = 0.0
-        var totalWeight = 0.0
-        forEach { sample ->
+        val weightedSamples = map { sample ->
             val weight = dynamicWeights[sample.sourceId]
                 ?: ForecastWeights.baseWeightFor(sample.sourceId)
-            weightedSum += sample.valueC * weight
-            totalWeight += weight
+            WeightedSample(sample = sample, weight = weight)
         }
-        return if (totalWeight <= 0.0) {
+
+        val totalWeight = weightedSamples.sumOf { it.weight }
+        val weightedMean = if (totalWeight <= 0.0) {
             map { it.valueC }.average()
         } else {
-            weightedSum / totalWeight
+            weightedSamples.sumOf { it.sample.valueC * it.weight } / totalWeight
         }
+
+        if (dynamicWeights.isEmpty() || weightedSamples.size < 2 || totalWeight <= 0.0) {
+            return weightedMean
+        }
+
+        val sortedByWeight = weightedSamples.sortedByDescending { it.weight }
+        val top = sortedByWeight.first()
+        val second = sortedByWeight.getOrNull(1)
+        val topShare = (top.weight / totalWeight).coerceIn(0.0, 1.0)
+        val dominanceRatio = if (second == null || second.weight <= 0.0) {
+            Double.POSITIVE_INFINITY
+        } else {
+            top.weight / second.weight
+        }
+
+        if (topShare < PREMIUM_DOMINANT_MIN_SHARE && dominanceRatio < PREMIUM_DOMINANT_MIN_RATIO) {
+            return weightedMean
+        }
+
+        val ratioFactor = if (dominanceRatio.isFinite()) {
+            ((dominanceRatio - 1.0) / (PREMIUM_DOMINANT_TARGET_RATIO - 1.0)).coerceIn(0.0, 1.0)
+        } else {
+            1.0
+        }
+        val shareFactor = (topShare / PREMIUM_DOMINANT_TARGET_SHARE).coerceIn(0.0, 1.0)
+        val alpha = (
+            PREMIUM_DOMINANT_BASE_ALPHA +
+                PREMIUM_DOMINANT_EXTRA_ALPHA * max(ratioFactor, shareFactor)
+            ).coerceIn(PREMIUM_DOMINANT_BASE_ALPHA, PREMIUM_DOMINANT_MAX_ALPHA)
+
+        return weightedMean * (1.0 - alpha) + top.sample.valueC * alpha
     }
 
     private fun median(values: List<Double>): Double {
@@ -584,6 +646,11 @@ class WeatherRepository(
         val valueC: Double
     )
 
+    private data class WeightedSample(
+        val sample: SourceTemp,
+        val weight: Double
+    )
+
     private data class PolyTempComputation(
         val polyTempC: Double?,
         val validMaxTempsC: List<Double>,
@@ -601,6 +668,13 @@ class WeatherRepository(
         private const val MIN_FORECASTS_FOR_HIGH_CONFIDENCE = 3
         private const val FORECAST_INVALID_EPSILON_C = 0.001
         private const val CITY_MARKET_CUTOFF_HOUR = 18
+        private const val PREMIUM_DOMINANT_MIN_SHARE = 0.22
+        private const val PREMIUM_DOMINANT_TARGET_SHARE = 0.35
+        private const val PREMIUM_DOMINANT_MIN_RATIO = 1.03
+        private const val PREMIUM_DOMINANT_TARGET_RATIO = 1.20
+        private const val PREMIUM_DOMINANT_BASE_ALPHA = 0.45
+        private const val PREMIUM_DOMINANT_EXTRA_ALPHA = 0.30
+        private const val PREMIUM_DOMINANT_MAX_ALPHA = 0.75
         private val VALID_TEMP_RANGE_C = -80.0..65.0
 
         fun createDefault(context: Context? = null): WeatherRepository {

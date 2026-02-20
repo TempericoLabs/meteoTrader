@@ -18,6 +18,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -33,7 +34,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
@@ -41,10 +41,7 @@ import androidx.compose.ui.unit.dp
 import com.polymeteo.meteotrader.data.forecast.ForecastWeights
 import com.polymeteo.meteotrader.data.model.CityWeatherData
 import com.polymeteo.meteotrader.data.model.PolyTempPremiumModelStat
-import com.polymeteo.meteotrader.data.model.PolyTempPremiumProviderDay
 import com.polymeteo.meteotrader.data.model.PolyTempPremiumReport
-import com.polymeteo.meteotrader.data.model.PolyTempPremiumVerificationDay
-import com.polymeteo.meteotrader.data.model.SourceStatus
 import com.polymeteo.meteotrader.data.model.TempUnit
 import com.polymeteo.meteotrader.ui.theme.DarkBase
 import com.polymeteo.meteotrader.ui.theme.DarkPanel
@@ -68,28 +65,13 @@ fun PolyTempPremiumScreen(
     onBack: () -> Unit,
     onRefresh: () -> Unit
 ) {
-    val cityName = cityData?.city?.name ?: report?.cityName ?: "PolyTemp PREMIUM"
+    val cityName = cityData?.city?.name ?: report?.cityName ?: "Media Modelos Ajustada (MMA)"
     val displayUnit = cityData?.city?.displayUnit ?: TempUnit.C
     val cityZoneId = cityData?.city?.zoneId ?: "UTC"
-    val uriHandler = LocalUriHandler.current
     var helpTopic by remember { mutableStateOf<PremiumHelpTopic?>(null) }
     val visibleRanking = remember(report) {
         report?.providerRanking
             ?.filterNot { stat -> ForecastWeights.isDeprecatedProvider(stat.providerId, stat.providerName) }
-            .orEmpty()
-    }
-    val visibleVerifications = remember(report) {
-        report?.dayVerifications
-            ?.mapNotNull { day ->
-                val providers = day.providers.filterNot { provider ->
-                    ForecastWeights.isDeprecatedProvider(provider.providerId, provider.providerName)
-                }
-                if (providers.isEmpty()) {
-                    null
-                } else {
-                    day.copy(providers = providers)
-                }
-            }
             .orEmpty()
     }
 
@@ -103,7 +85,7 @@ fun PolyTempPremiumScreen(
         containerColor = DarkBase,
         topBar = {
             TopAppBar(
-                title = { Text("PolyTemp PREMIUM • $cityName") },
+                title = { Text("Media Modelos Ajustada (MMA) • $cityName") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver")
@@ -111,7 +93,7 @@ fun PolyTempPremiumScreen(
                 },
                 actions = {
                     IconButton(onClick = onRefresh) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Actualizar PolyTemp PREMIUM")
+                        Icon(Icons.Default.Refresh, contentDescription = "Actualizar Media Modelos Ajustada (MMA)")
                     }
                 }
             )
@@ -134,6 +116,7 @@ fun PolyTempPremiumScreen(
                     SummaryCard(
                         report = report,
                         cityZoneId = cityZoneId,
+                        isRefreshing = isRefreshing,
                         onHelpRequested = { helpTopic = it }
                     )
                 }
@@ -181,32 +164,6 @@ fun PolyTempPremiumScreen(
                 }
 
                 item {
-                    SectionTitle(
-                        title = "Verificacion diaria (hasta ayer)",
-                        topic = PremiumHelpTopic.VERIFICATION,
-                        onHelpRequested = { helpTopic = it }
-                    )
-                }
-
-                if (report == null) {
-                    item { EmptyCard("Cargando historico de verificacion...") }
-                } else if (visibleVerifications.isEmpty()) {
-                    item { EmptyCard("Sin dias verificados todavia.") }
-                } else {
-                    items(
-                        visibleVerifications,
-                        key = { "${it.targetDate}-${it.verifiedAt.toEpochMilli()}" }
-                    ) { day ->
-                        VerificationDayCard(
-                            day = day,
-                            displayUnit = displayUnit,
-                            onHelpRequested = { helpTopic = it },
-                            onOpenUrl = { url -> runCatching { uriHandler.openUri(url) } }
-                        )
-                    }
-                }
-
-                item {
                     Text(
                         text = "Actualizado: ${report?.generatedAt?.formatInZone(cityZoneId, "dd-MM-yyyy HH:mm") ?: "--"}",
                         style = MaterialTheme.typography.labelSmall,
@@ -229,6 +186,7 @@ fun PolyTempPremiumScreen(
 private fun SummaryCard(
     report: PolyTempPremiumReport?,
     cityZoneId: String,
+    isRefreshing: Boolean,
     onHelpRequested: (PremiumHelpTopic) -> Unit
 ) {
     Column(
@@ -249,11 +207,68 @@ private fun SummaryCard(
 
         if (report == null) {
             Text(
-                text = "Inicializando datos PREMIUM...",
+                text = "Inicializando datos de Media Modelos Ajustada (MMA)...",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MutedInk
             )
+            if (isRefreshing) {
+                Text(
+                    text = "Calibrando histórico completo...",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF8FC8FF)
+                )
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
             return
+        }
+
+        val ranked = report.providerRanking
+        val topModel = ranked.firstOrNull()
+        val secondModel = ranked.drop(1).firstOrNull()
+        val totalWeight = ranked.sumOf { stat -> stat.dynamicWeight }.takeIf { it > 0.0 } ?: 0.0
+        val topShare = if (topModel != null && totalWeight > 0.0) {
+            (topModel.dynamicWeight / totalWeight).coerceIn(0.0, 1.0)
+        } else {
+            null
+        }
+        val advantageVsSecond = if (topModel != null && secondModel != null && secondModel.dynamicWeight > 0.0) {
+            topModel.dynamicWeight / secondModel.dynamicWeight
+        } else {
+            null
+        }
+
+        if (topModel != null) {
+            Text(
+                text = "Modelo dominante",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFF8FC8FF),
+                textDecoration = TextDecoration.Underline,
+                modifier = Modifier.clickable { onHelpRequested(PremiumHelpTopic.DOMINANT_MODEL) }
+            )
+            Text(
+                text = topModel.providerName,
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                color = Positive
+            )
+            Text(
+                text = "Peso decisivo: ${formatWeight(topModel.dynamicWeight)}" +
+                    (topShare?.let { share -> " (${formatPercent(share)})" } ?: ""),
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                color = Positive
+            )
+            Text(
+                text = "Ventaja vs 2º modelo: " +
+                    (advantageVsSecond?.let { value -> String.format(Locale.US, "x%.2f", value) } ?: "--"),
+                style = MaterialTheme.typography.labelSmall,
+                color = if ((advantageVsSecond ?: 0.0) >= 1.20) Positive else Color(0xFFFFC857)
+            )
+            val dominanceBar = topShare?.toFloat()?.coerceIn(0f, 1f)
+            if (dominanceBar != null) {
+                LinearProgressIndicator(
+                    progress = { dominanceBar },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
         }
 
         MetricLine(
@@ -282,13 +297,37 @@ private fun SummaryCard(
         )
 
         if (report.bootstrapProgress.isNotEmpty()) {
+            val totalDays = report.bootstrapProgress.sumOf { progress -> progress.totalDays }
+            val processedDays = report.bootstrapProgress.sumOf { progress -> progress.processedDays }
+            val overallFraction = if (totalDays <= 0) 1.0 else {
+                processedDays.toDouble() / totalDays.toDouble()
+            }.coerceIn(0.0, 1.0)
+
             Text(
-                text = "Bootstrap historico (H0/H1/H2)",
+                text = "Carga histórica completa (H0/H1/H2)",
                 style = MaterialTheme.typography.labelSmall,
                 color = Color(0xFF8FC8FF),
                 textDecoration = TextDecoration.Underline,
                 modifier = Modifier.clickable { onHelpRequested(PremiumHelpTopic.BOOTSTRAP_PROGRESS) }
             )
+            Text(
+                text = "$processedDays/$totalDays (${formatPercent(overallFraction)})",
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                color = if (overallFraction >= 1.0) Positive else Color(0xFFFFC857)
+            )
+            if (isRefreshing && overallFraction < 1.0) {
+                Text(
+                    text = "Calibrando histórico completo...",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFF8FC8FF)
+                )
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            } else {
+                LinearProgressIndicator(
+                    progress = { overallFraction.toFloat() },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
             report.bootstrapProgress.forEach { progress ->
                 val progressFraction = if (progress.totalDays <= 0) {
                     1.0
@@ -455,139 +494,6 @@ private fun ModelRankingRow(
                 topic = PremiumHelpTopic.SCORE,
                 onHelpRequested = onHelpRequested,
                 modifier = Modifier.weight(1f)
-            )
-        }
-    }
-}
-
-@Composable
-private fun VerificationDayCard(
-    day: PolyTempPremiumVerificationDay,
-    displayUnit: TempUnit,
-    onHelpRequested: (PremiumHelpTopic) -> Unit,
-    onOpenUrl: (String) -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(DarkPanel)
-            .border(1.dp, Color(0x22FFFFFF))
-            .padding(10.dp)
-    ) {
-        Text(
-            text = day.targetDate.format(DateTimeFormatter.ofPattern("dd-MM-yyyy", Locale.US)),
-            style = MaterialTheme.typography.titleSmall,
-            color = Color(0xFF8FC8FF)
-        )
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Observado ${formatTempFromC(day.observedMaxC, displayUnit)}",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                textDecoration = TextDecoration.Underline,
-                modifier = Modifier.clickable { onHelpRequested(PremiumHelpTopic.OBSERVED_MAX) }
-            )
-            Text(
-                text = day.verifiedAt.formatInZone("UTC", "dd-MM HH:mm 'UTC'"),
-                style = MaterialTheme.typography.labelSmall,
-                color = MutedInk
-            )
-        }
-
-        if (!day.observedSourceUrl.isNullOrBlank()) {
-            Text(
-                text = "Fuente observada",
-                style = MaterialTheme.typography.labelSmall,
-                color = Color(0xFF8FC8FF),
-                textDecoration = TextDecoration.Underline,
-                modifier = Modifier
-                    .padding(top = 2.dp)
-                    .clickable { onOpenUrl(day.observedSourceUrl) }
-            )
-        }
-
-        day.providers.forEach { provider ->
-            ProviderVerificationLine(
-                provider = provider,
-                displayUnit = displayUnit,
-                onHelpRequested = onHelpRequested
-            )
-        }
-    }
-}
-
-@Composable
-private fun ProviderVerificationLine(
-    provider: PolyTempPremiumProviderDay,
-    displayUnit: TempUnit,
-    onHelpRequested: (PremiumHelpTopic) -> Unit
-) {
-    val statusColor = when (provider.status) {
-        SourceStatus.SUCCESS -> Positive
-        SourceStatus.ERROR -> Negative
-        SourceStatus.SKIPPED -> MutedInk
-    }
-    val errorColor = when {
-        provider.absoluteErrorC == null -> MutedInk
-        provider.absoluteErrorC <= 1.0 -> Positive
-        provider.absoluteErrorC <= 2.5 -> Color(0xFFFFC857)
-        else -> Negative
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 6.dp)
-            .background(Color(0x141E30FF))
-            .border(1.dp, Color(0x1FFFFFFF))
-            .padding(horizontal = 8.dp, vertical = 6.dp)
-    ) {
-        Text(
-            text = provider.providerName,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 2.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Text(
-                text = "Pred ${formatTempFromC(provider.forecastMaxC, displayUnit)}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                textDecoration = TextDecoration.Underline,
-                modifier = Modifier.clickable { onHelpRequested(PremiumHelpTopic.FORECAST_VALUE) }
-            )
-            Text(
-                text = "Err ${formatTempFromC(provider.absoluteErrorC, displayUnit)}",
-                style = MaterialTheme.typography.labelSmall,
-                color = errorColor,
-                textDecoration = TextDecoration.Underline,
-                modifier = Modifier.clickable { onHelpRequested(PremiumHelpTopic.ERROR_VALUE) }
-            )
-            Text(
-                text = provider.status.name,
-                style = MaterialTheme.typography.labelSmall,
-                color = statusColor,
-                textDecoration = TextDecoration.Underline,
-                modifier = Modifier.clickable { onHelpRequested(PremiumHelpTopic.STATUS) }
-            )
-        }
-        if (!provider.errorMessage.isNullOrBlank()) {
-            Text(
-                text = provider.errorMessage,
-                style = MaterialTheme.typography.labelSmall,
-                color = Negative,
-                modifier = Modifier.padding(top = 2.dp)
             )
         }
     }
@@ -825,12 +731,16 @@ private enum class PremiumHelpTopic(
     val message: String
 ) {
     PREMIUM_ENGINE(
-        title = "PolyTemp PREMIUM",
+        title = "Media Modelos Ajustada (MMA)",
         message = "Es el motor que aprende diariamente por ciudad: compara pronosticos vs maxima observada real y ajusta los pesos de cada modelo automaticamente."
+    ),
+    DOMINANT_MODEL(
+        title = "Modelo dominante",
+        message = "Modelo con mayor peso dinámico en esta ciudad/horizonte. Cuanto mayor su ventaja frente al segundo modelo, más decisiva es su influencia en la Media Modelos Ajustada (MMA)."
     ),
     GENERATED(
         title = "Generado",
-        message = "Momento exacto del ultimo calculo del dashboard PREMIUM para esta ciudad."
+        message = "Momento exacto del ultimo calculo del dashboard de Media Modelos Ajustada (MMA) para esta ciudad."
     ),
     VERIFIED_DAYS(
         title = "Dias verificados",
@@ -842,15 +752,15 @@ private enum class PremiumHelpTopic(
     ),
     BOOTSTRAP_PROGRESS(
         title = "Bootstrap historico",
-        message = "Progreso de carga historica por horizonte: H0 (hoy), H1 (mañana), H2 (pasado mañana). En refresh manual avanza sin espera para acelerar calibracion."
+        message = "Carga histórica completa por horizonte: H0 (hoy), H1 (mañana), H2 (pasado mañana). En refresh se recorre todo el histórico pendiente en una sola ejecución."
     ),
     RANKING(
         title = "Ranking vivo",
-        message = "Ordena modelos por rendimiento reciente en esta ciudad. Verde = sube peso vs ayer, naranja = se mantiene, rojo = baja peso. El ranking alimenta los pesos dinamicos de PolyTemp PREMIUM."
+        message = "Ordena modelos por rendimiento reciente en esta ciudad. Verde = sube peso vs ayer, naranja = se mantiene, rojo = baja peso. El ranking alimenta los pesos dinamicos de la Media Modelos Ajustada (MMA)."
     ),
     DYNAMIC_WEIGHT(
         title = "Peso dinamico",
-        message = "Peso actual que usa PolyTemp PREMIUM para ese modelo en esta ciudad. Sube si acierta mas; baja si falla mas."
+        message = "Peso actual que usa la Media Modelos Ajustada (MMA) para ese modelo en esta ciudad. Sube si acierta mas; baja si falla mas."
     ),
     BASE_WEIGHT(
         title = "Peso base",

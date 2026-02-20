@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.time.Instant
 
@@ -56,6 +57,7 @@ class MeteoViewModel(
     val uiState: StateFlow<MeteoUiState> = _uiState.asStateFlow()
     private var refreshJob: Job? = null
     private var backtestJob: Job? = null
+    private var premiumWarmupJob: Job? = null
     private val cityRefreshJobs = mutableMapOf<String, Job>()
     private val premiumJobs = mutableMapOf<String, Job>()
 
@@ -66,6 +68,7 @@ class MeteoViewModel(
 
     fun refresh(initialLoad: Boolean = false) {
         if (refreshJob?.isActive == true) return
+        premiumWarmupJob?.cancel()
         refreshJob = viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 isLoading = initialLoad,
@@ -84,6 +87,7 @@ class MeteoViewModel(
                     errorMessage = null
                 )
                 launchBacktestRefresh(cities)
+                launchPremiumWarmup(cities)
             }.onFailure { throwable ->
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
@@ -102,18 +106,7 @@ class MeteoViewModel(
                     repository.fetchCityById(cityId)
                 }.onSuccess { cityData ->
                     if (cityData == null) return@onSuccess
-                    val updated = _uiState.value.cities.toMutableList()
-                    val index = updated.indexOfFirst { it.city.id == cityId }
-                    if (index >= 0) {
-                        updated[index] = cityData
-                    } else {
-                        updated += cityData
-                    }
-                    _uiState.value = _uiState.value.copy(
-                        cities = updated,
-                        lastUpdatedAt = Instant.now(),
-                        errorMessage = null
-                    )
+                    val updated = applyCityUpdate(cityData)
                     launchBacktestRefresh(updated)
                 }.onFailure { throwable ->
                     _uiState.value = _uiState.value.copy(
@@ -185,6 +178,56 @@ class MeteoViewModel(
         }
     }
 
+    private fun launchPremiumWarmup(cities: List<CityWeatherData>) {
+        premiumWarmupJob?.cancel()
+        premiumWarmupJob = viewModelScope.launch {
+            for (city in cities) {
+                if (!isActive) break
+                val cityId = city.city.id
+                if (premiumJobs[cityId]?.isActive == true) continue
+
+                _uiState.value = _uiState.value.copy(
+                    premiumRefreshingCityIds = _uiState.value.premiumRefreshingCityIds + cityId,
+                    premiumErrorsByCity = _uiState.value.premiumErrorsByCity - cityId
+                )
+
+                runCatching {
+                    repository.refreshPremiumReport(cityId)
+                }.onSuccess { report ->
+                    if (report == null) {
+                        _uiState.value = _uiState.value.copy(
+                            premiumErrorsByCity = _uiState.value.premiumErrorsByCity + (cityId to "Ciudad no encontrada")
+                        )
+                        return@onSuccess
+                    }
+
+                    _uiState.value = _uiState.value.copy(
+                        premiumReportsByCity = _uiState.value.premiumReportsByCity + (cityId to report),
+                        premiumErrorsByCity = _uiState.value.premiumErrorsByCity - cityId
+                    )
+
+                    runCatching { repository.fetchCityById(cityId) }.onSuccess { updatedCity ->
+                        if (updatedCity != null) {
+                            applyCityUpdate(updatedCity)
+                        }
+                    }
+                }.onFailure { throwable ->
+                    if (throwable !is CancellationException) {
+                        _uiState.value = _uiState.value.copy(
+                            premiumErrorsByCity = _uiState.value.premiumErrorsByCity + (
+                                cityId to (throwable.message ?: "No se pudo precalcular Media Modelos Ajustada (MMA)")
+                                )
+                        )
+                    }
+                }
+
+                _uiState.value = _uiState.value.copy(
+                    premiumRefreshingCityIds = _uiState.value.premiumRefreshingCityIds - cityId
+                )
+            }
+        }
+    }
+
     fun cityById(cityId: String): CityWeatherData? {
         return _uiState.value.cities.firstOrNull { it.city.id == cityId }
     }
@@ -192,6 +235,7 @@ class MeteoViewModel(
     fun refreshPremium(cityId: String, force: Boolean = true) {
         if (cityId.isBlank()) return
         if (premiumJobs[cityId]?.isActive == true) return
+        if (_uiState.value.premiumRefreshingCityIds.contains(cityId)) return
         if (!force && _uiState.value.premiumReportsByCity.containsKey(cityId)) return
 
         premiumJobs[cityId] = viewModelScope.launch {
@@ -212,12 +256,19 @@ class MeteoViewModel(
                         premiumReportsByCity = _uiState.value.premiumReportsByCity + (cityId to report),
                         premiumErrorsByCity = _uiState.value.premiumErrorsByCity - cityId
                     )
+                    runCatching {
+                        repository.fetchCityById(cityId)
+                    }.onSuccess { cityData ->
+                        if (cityData != null) {
+                            applyCityUpdate(cityData)
+                        }
+                    }
                 }
             }.onFailure { throwable ->
                 if (throwable !is CancellationException) {
                     _uiState.value = _uiState.value.copy(
                         premiumErrorsByCity = _uiState.value.premiumErrorsByCity + (
-                            cityId to (throwable.message ?: "No se pudo cargar PolyTemp PREMIUM")
+                            cityId to (throwable.message ?: "No se pudo cargar Media Modelos Ajustada (MMA)")
                             )
                     )
                 }
@@ -228,6 +279,22 @@ class MeteoViewModel(
             )
             premiumJobs.remove(cityId)
         }
+    }
+
+    private fun applyCityUpdate(cityData: CityWeatherData): List<CityWeatherData> {
+        val updated = _uiState.value.cities.toMutableList()
+        val index = updated.indexOfFirst { it.city.id == cityData.city.id }
+        if (index >= 0) {
+            updated[index] = cityData
+        } else {
+            updated += cityData
+        }
+        _uiState.value = _uiState.value.copy(
+            cities = updated,
+            lastUpdatedAt = Instant.now(),
+            errorMessage = null
+        )
+        return updated
     }
 
     fun setAppMode(mode: AppMode) {

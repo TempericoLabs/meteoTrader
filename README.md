@@ -11,7 +11,7 @@ App Android (Jetpack Compose) para mercados de temperatura máxima diaria en Pol
   - Temperatura METAR actual
   - Delta vs METAR anterior del mismo día
   - Temperatura de estación de control (scraping Wunderground)
-  - `PolyTEMP` (media de máximas diarias de las fuentes que sí respondieron)
+  - `Media Modelos (MM)` (media de máximas diarias de las fuentes que sí respondieron)
   - Señal trader (`OVER` / `UNDER` / `RANGE`) + edge estimado
 - Pantalla detalle por ciudad con:
   - Bloque completo METAR
@@ -36,7 +36,7 @@ App Android (Jetpack Compose) para mercados de temperatura máxima diaria en Pol
 - METAR: `aviationweather.gov` (JSON, últimas 24h).
 - TAF: `aviationweather.gov` (JSON METAR + `taf=1`, vigencia operacional del aeródromo).
 - Control station: scraping Wunderground (`history/daily` + `dashboard/pws` fallback).
-- Forecasts para PolyTEMP:
+- Forecasts para Media Modelos (MM):
   - Windy (ECMWF/GFS/ICON)
   - Open-Meteo (ECMWF IFS + AIFS)
   - OpenWeather
@@ -64,6 +64,6 @@ APK generado en:
 
 ## Nota técnica
 
-Wunderground y algunos proveedores pueden cambiar HTML/contratos; el app mantiene fallback y deja trazabilidad del error por fuente para que PolyTEMP use solo datos válidos.
+Wunderground y algunos proveedores pueden cambiar HTML/contratos; el app mantiene fallback y deja trazabilidad del error por fuente para que Media Modelos (MM) use solo datos válidos.
 
 El backtesting liquida mercados históricos usando la máxima diaria observada en Wunderground (`/history/daily/.../date/YYYY-MM-DD`), con reintentos y deduplicación por mercado/bucket temporal para no degradar rendimiento.
