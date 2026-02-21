@@ -1,5 +1,11 @@
 # PENDIENTES
 
+## Punto de control activo (MVP v0.3)
+- Fecha checkpoint: 2026-02-21 08:01:49 UTC
+- Commit base: `1b015c52f877a3652a16b0b1a4410d3e7874f28b` (`MVP v0.3`)
+- Estado: workspace limpio, compilación y tests OK en el último ajuste de MM/MMA.
+- Reanudar desde: rama `main` en ese commit (o posterior).
+
 ## Checklist operativo de validación en vivo por ciudad (Polymarket)
 - Verificar que para la ciudad y fecha (hoy/mañana/pasado) existe evento por slug directo y por alias de ciudad.
 - Confirmar que el número de mercados cargados en app coincide con los buckets abiertos en Polymarket web.
