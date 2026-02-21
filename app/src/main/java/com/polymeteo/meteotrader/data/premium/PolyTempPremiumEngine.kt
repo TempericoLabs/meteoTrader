@@ -4,6 +4,7 @@ import com.polymeteo.meteotrader.data.CityCatalog
 import com.polymeteo.meteotrader.data.forecast.ForecastWeights
 import com.polymeteo.meteotrader.data.model.CityConfig
 import com.polymeteo.meteotrader.data.model.ForecastSourceResult
+import com.polymeteo.meteotrader.data.model.PremiumComputationSource
 import com.polymeteo.meteotrader.data.model.PolyTempPremiumBootstrapProgress
 import com.polymeteo.meteotrader.data.model.PolyTempPremiumModelStat
 import com.polymeteo.meteotrader.data.model.PolyTempPremiumProviderDay
@@ -30,16 +31,38 @@ data class PremiumWeightSnapshot(
     val lastVerifiedDate: LocalDate?,
     val calibrationReady: Boolean,
     val calibrationProgress: Double,
-    val warnings: List<String>
+    val warnings: List<String>,
+    val source: PremiumComputationSource
 )
 
 class PolyTempPremiumEngine(
     private val store: PolyTempPremiumStore,
+    private val weightsPreferencesStore: PremiumWeightsPreferencesStore? = null,
     private val wundergroundSource: WundergroundSource,
     private val openMeteoHistoricalSource: OpenMeteoHistoricalSource,
     private val noaaObservedSource: NoaaObservedSource,
     private val nowProvider: () -> Instant = { Instant.now() }
 ) {
+
+    suspend fun readCachedWeights(
+        city: CityConfig,
+        targetDate: LocalDate,
+        forecasts: List<ForecastSourceResult>
+    ): PremiumWeightSnapshot? {
+        val cacheStore = weightsPreferencesStore ?: return null
+        val now = nowProvider()
+        val horizonDays = horizonDays(city = city, targetDate = targetDate, now = now)
+        val providerIds = forecasts
+            .mapNotNull { result ->
+                if (ForecastWeights.isDeprecatedProvider(result.sourceId, result.sourceName)) null else result.sourceId
+            }
+            .toSet()
+        val entry = cacheStore.read(city.id, horizonDays) ?: return null
+        return entry.toSnapshot(
+            providerIds = providerIds,
+            source = PremiumComputationSource.PREFERENCES_CACHE
+        )
+    }
 
     suspend fun ingestAndResolveWeights(
         city: CityConfig,
@@ -67,6 +90,31 @@ class PolyTempPremiumEngine(
         dataset = upsert.dataset
         changed = changed || upsert.changed
 
+        if (changed) {
+            store.write(dataset.copy(updatedAtEpochMs = now.toEpochMilli()))
+        }
+
+        val providerIds = forecasts
+            .mapNotNull { result ->
+                if (ForecastWeights.isDeprecatedProvider(result.sourceId, result.sourceName)) null else result.sourceId
+            }
+            .toSet()
+        val cachedSignature = buildVerificationSignature(
+            dataset = dataset,
+            cityId = city.id,
+            horizonDays = targetHorizonDays
+        )
+        val cachedEntry = weightsPreferencesStore?.read(city.id, targetHorizonDays)
+        if (
+            cachedEntry != null &&
+            cachedEntry.verificationSignature == cachedSignature
+        ) {
+            return@coroutineScope cachedEntry.toSnapshot(
+                providerIds = providerIds,
+                source = PremiumComputationSource.PREFERENCES_CACHE
+            )
+        }
+
         val verified = verifyPendingDates(
             dataset = dataset,
             city = city,
@@ -84,11 +132,6 @@ class PolyTempPremiumEngine(
         }
 
         val cityToday = cityToday(city, now)
-        val providerIds = forecasts
-            .mapNotNull { result ->
-                if (ForecastWeights.isDeprecatedProvider(result.sourceId, result.sourceName)) null else result.sourceId
-            }
-            .toSet()
 
         val resolution = resolveWeightsForHorizon(
             dataset = dataset,
@@ -111,14 +154,27 @@ class PolyTempPremiumEngine(
             else -> targetBootstrap.processedDays.toDouble() / targetBootstrap.totalDays.toDouble()
         }.coerceIn(0.0, 1.0)
 
-        PremiumWeightSnapshot(
+        val computed = PremiumWeightSnapshot(
             weightsByProviderId = resolution.weightsByProviderId,
             verifiedDays = resolution.verifiedDays,
             lastVerifiedDate = resolution.lastVerifiedDate,
             calibrationReady = targetBootstrap?.completed == true || targetProgress >= 1.0,
             calibrationProgress = targetProgress,
-            warnings = (verified.warnings + resolution.warnings).distinct()
+            warnings = (verified.warnings + resolution.warnings).distinct(),
+            source = PremiumComputationSource.RECALCULATED
         )
+        persistWeightsCache(
+            city = city,
+            horizonDays = targetHorizonDays,
+            verificationSignature = buildVerificationSignature(
+                dataset = dataset,
+                cityId = city.id,
+                horizonDays = targetHorizonDays
+            ),
+            snapshot = computed,
+            now = now
+        )
+        computed
     }
 
     suspend fun refreshCityReport(city: CityConfig): PolyTempPremiumReport {
@@ -159,6 +215,11 @@ class PolyTempPremiumEngine(
         if (changed) {
             store.write(dataset.copy(updatedAtEpochMs = now.toEpochMilli()))
         }
+        cacheResolvedWeightsForCity(
+            dataset = dataset,
+            city = city,
+            now = now
+        )
 
         return buildReport(
             dataset = dataset,
@@ -206,6 +267,11 @@ class PolyTempPremiumEngine(
         if (changed) {
             store.write(dataset.copy(updatedAtEpochMs = now.toEpochMilli()))
         }
+        cacheResolvedWeightsForCity(
+            dataset = dataset,
+            city = city,
+            now = now
+        )
 
         return buildReport(
             dataset = dataset,
@@ -768,6 +834,147 @@ class PolyTempPremiumEngine(
             normalized.contains("ncdc.noaa.gov") || normalized.contains("noaa.gov") -> 2
             normalized.contains("open-meteo") -> 1
             else -> 0
+        }
+    }
+
+    private fun PremiumWeightsCacheEntry.toSnapshot(
+        providerIds: Set<String>,
+        source: PremiumComputationSource
+    ): PremiumWeightSnapshot {
+        val providerWeights = if (providerIds.isEmpty()) {
+            weightsByProviderId
+        } else {
+            providerIds.associateWith { providerId ->
+                weightsByProviderId[providerId] ?: ForecastWeights.baseWeightFor(providerId)
+            }
+        }
+        return PremiumWeightSnapshot(
+            weightsByProviderId = providerWeights,
+            verifiedDays = verifiedDays,
+            lastVerifiedDate = lastVerifiedDateIso?.toLocalDateOrNull(),
+            calibrationReady = calibrationReady || calibrationProgress >= 1.0,
+            calibrationProgress = calibrationProgress,
+            warnings = warnings,
+            source = source
+        )
+    }
+
+    private fun buildVerificationSignature(
+        dataset: PolyTempPremiumDataset,
+        cityId: String,
+        horizonDays: Int
+    ): String {
+        val verifications = dataset.verifications
+            .filter { item -> item.cityId == cityId && item.horizonDays == horizonDays }
+            .sortedByDescending { item -> item.targetDateIso }
+        if (verifications.isEmpty()) return "empty"
+
+        var checksum = 17L
+        for (verification in verifications) {
+            checksum = 31L * checksum + verification.targetDateIso.hashCode().toLong()
+            checksum = 31L * checksum + verification.verifiedAtEpochMs
+            checksum = 31L * checksum + java.lang.Double.doubleToLongBits(verification.observedMaxC)
+            val entries = verification.entries.sortedBy { entry -> entry.providerId }
+            checksum = 31L * checksum + entries.size.toLong()
+            for (entry in entries) {
+                checksum = 31L * checksum + entry.providerId.hashCode().toLong()
+                checksum = 31L * checksum + (entry.status.hashCode().toLong())
+                checksum = 31L * checksum + (entry.absoluteErrorC?.let(java.lang.Double::doubleToLongBits) ?: -1L)
+            }
+        }
+        val lastVerifiedAt = verifications.maxOfOrNull { it.verifiedAtEpochMs } ?: 0L
+        val latestTargetDate = verifications.maxOfOrNull { it.targetDateIso } ?: ""
+        return "${verifications.size}|$latestTargetDate|$lastVerifiedAt|$checksum"
+    }
+
+    private suspend fun persistWeightsCache(
+        city: CityConfig,
+        horizonDays: Int,
+        verificationSignature: String,
+        snapshot: PremiumWeightSnapshot,
+        now: Instant
+    ) {
+        val cacheStore = weightsPreferencesStore ?: return
+        val entry = PremiumWeightsCacheEntry(
+            cityId = city.id,
+            horizonDays = horizonDays,
+            verificationSignature = verificationSignature,
+            weightsByProviderId = snapshot.weightsByProviderId,
+            verifiedDays = snapshot.verifiedDays,
+            lastVerifiedDateIso = snapshot.lastVerifiedDate?.toString(),
+            calibrationReady = snapshot.calibrationReady,
+            calibrationProgress = snapshot.calibrationProgress,
+            warnings = snapshot.warnings,
+            generatedAtEpochMs = now.toEpochMilli()
+        )
+        cacheStore.write(entry)
+    }
+
+    private suspend fun cacheResolvedWeightsForCity(
+        dataset: PolyTempPremiumDataset,
+        city: CityConfig,
+        now: Instant
+    ) {
+        if (weightsPreferencesStore == null) return
+        val zoneId = ZoneId.of(city.zoneId)
+        val cityToday = LocalDate.now(zoneId)
+        val bootstrapProgress = buildBootstrapProgress(
+            dataset = dataset,
+            city = city,
+            cityToday = cityToday
+        ).associateBy { progress -> progress.horizonDays }
+        val providerIds = buildSet {
+            dataset.snapshots
+                .filter { snapshot -> snapshot.cityId == city.id }
+                .forEach { snapshot -> add(snapshot.providerId) }
+            dataset.verifications
+                .filter { verification -> verification.cityId == city.id }
+                .forEach { verification ->
+                    verification.entries.forEach { entry ->
+                        add(entry.providerId)
+                    }
+                }
+            ForecastWeights.BASE_WEIGHTS.keys
+                .filterNot { providerId -> ForecastWeights.isDeprecatedProvider(providerId) }
+                .forEach { providerId -> add(providerId) }
+        }.filterNot { providerId ->
+            ForecastWeights.isDeprecatedProvider(providerId)
+        }.toSet()
+
+        for (horizonDays in BOOTSTRAP_HORIZONS) {
+            val resolution = resolveWeightsForHorizon(
+                dataset = dataset,
+                city = city,
+                horizonDays = horizonDays,
+                providerIds = providerIds,
+                cityToday = cityToday
+            )
+            val progress = bootstrapProgress[horizonDays]
+            val progressFraction = when {
+                progress == null -> 0.0
+                progress.totalDays <= 0 -> 1.0
+                else -> progress.processedDays.toDouble() / progress.totalDays.toDouble()
+            }.coerceIn(0.0, 1.0)
+            val snapshot = PremiumWeightSnapshot(
+                weightsByProviderId = resolution.weightsByProviderId,
+                verifiedDays = resolution.verifiedDays,
+                lastVerifiedDate = resolution.lastVerifiedDate,
+                calibrationReady = progress?.completed == true || progressFraction >= 1.0,
+                calibrationProgress = progressFraction,
+                warnings = resolution.warnings,
+                source = PremiumComputationSource.RECALCULATED
+            )
+            persistWeightsCache(
+                city = city,
+                horizonDays = horizonDays,
+                verificationSignature = buildVerificationSignature(
+                    dataset = dataset,
+                    cityId = city.id,
+                    horizonDays = horizonDays
+                ),
+                snapshot = snapshot,
+                now = now
+            )
         }
     }
 

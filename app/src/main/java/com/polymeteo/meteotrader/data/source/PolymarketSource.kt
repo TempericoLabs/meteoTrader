@@ -1,6 +1,8 @@
 package com.polymeteo.meteotrader.data.source
 
 import com.polymeteo.meteotrader.data.model.CityConfig
+import com.polymeteo.meteotrader.data.model.DecisionTraceEntry
+import com.polymeteo.meteotrader.data.model.DecisionTraceStatus
 import com.polymeteo.meteotrader.data.model.MarketConditionType
 import com.polymeteo.meteotrader.data.model.MarketRangeCondition
 import com.polymeteo.meteotrader.data.model.PolymarketSnapshot
@@ -22,7 +24,6 @@ import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.Locale
 import kotlin.math.abs
@@ -95,28 +96,58 @@ class PolymarketSource(
         }
 
         val marketWindow = parsedMarkets.filterByTargetDates(targetDates.toSet())
-        val evaluatedOpportunities = marketWindow
-            .mapNotNull { market ->
+        val inputDecisionTrace = mutableListOf<DecisionTraceEntry>()
+        val evaluatedOpportunities = buildList {
+            marketWindow.forEach { market ->
                 val marketDate = market.condition.targetDate ?: today
                 val dayInput = modelInputsByDate[marketDate]
                     ?: modelInputsByDate[today]
-                val polyTempC = dayInput?.polyTempC ?: return@mapNotNull null
+                if (dayInput == null) {
+                    inputDecisionTrace += DecisionTraceEntry(
+                        marketId = market.id,
+                        question = market.question,
+                        targetDate = market.condition.targetDate,
+                        stage = TRACE_STAGE_INPUT,
+                        status = DecisionTraceStatus.DISCARDED,
+                        reason = "Sin entrada de modelo para este horizonte",
+                        details = listOf("Fecha objetivo: $marketDate")
+                    )
+                    return@forEach
+                }
+                val polyTempC = dayInput.polyTempC
+                if (polyTempC == null) {
+                    inputDecisionTrace += DecisionTraceEntry(
+                        marketId = market.id,
+                        question = market.question,
+                        targetDate = market.condition.targetDate,
+                        stage = TRACE_STAGE_INPUT,
+                        status = DecisionTraceStatus.DISCARDED,
+                        reason = "MM/MMA no disponible para evaluar el mercado",
+                        details = listOf("Fecha objetivo: $marketDate")
+                    )
+                    return@forEach
+                }
                 val sigmaC = estimateSigmaC(dayInput.forecastDailyMaxC)
-                evaluateOpportunity(
-                    market = market,
-                    polyTempC = polyTempC,
-                    sigmaC = sigmaC,
-                    city = city,
-                    cityToday = today,
-                    localHour = localHour
+                add(
+                    evaluateOpportunity(
+                        market = market,
+                        polyTempC = polyTempC,
+                        sigmaC = sigmaC,
+                        city = city,
+                        cityToday = today,
+                        localHour = localHour
+                    )
                 )
             }
-        val opportunities = applyRecommendationControls(
+        }
+        val recommendationResult = applyRecommendationControls(
             opportunities = evaluatedOpportunities,
             cityToday = today,
             localHour = localHour
         )
+        val opportunities = recommendationResult.kept
             .sortedByDescending { it.executableEdge }
+        val decisionTrace = inputDecisionTrace + recommendationResult.traces
 
         val topToday = opportunities
             .filter { it.condition.targetDate == null || it.condition.targetDate == today }
@@ -128,6 +159,7 @@ class PolymarketSource(
             marketsScanned = parsedMarkets.size,
             opportunities = opportunities,
             topOpportunity = topToday,
+            decisionTrace = decisionTrace,
             error = when {
                 evaluatedOpportunities.isEmpty() -> "Media Modelos (MM/MMA) no disponible para los mercados activos"
                 opportunities.isEmpty() -> "Mercados descartados por control de ejecución (liquidez/costes/dominancia)"
@@ -580,178 +612,204 @@ class PolymarketSource(
         opportunities: List<TraderOpportunity>,
         cityToday: LocalDate,
         localHour: Int
-    ): List<TraderOpportunity> {
-        if (opportunities.isEmpty()) return emptyList()
-        return opportunities
+    ): RecommendationControlResult {
+        if (opportunities.isEmpty()) {
+            return RecommendationControlResult(
+                kept = emptyList(),
+                traces = emptyList()
+            )
+        }
+
+        val kept = mutableListOf<TraderOpportunity>()
+        val traces = mutableListOf<DecisionTraceEntry>()
+        opportunities
             .groupBy { opportunity -> opportunity.condition.targetDate ?: cityToday }
-            .flatMap { (targetDate, dayMarkets) ->
-                if (isMarketDominated(dayMarkets, targetDate, cityToday, localHour)) {
-                    emptyList()
-                } else {
-                    val minEdgeForHour = when {
-                        targetDate == cityToday && localHour >= LATE_DAY_HOUR -> LATE_DAY_MIN_EXECUTABLE_EDGE
-                        else -> CONTROL_MIN_EXECUTABLE_EDGE
-                    }
-                    dayMarkets.filter { opportunity ->
-                        passesExecutionControl(
-                            opportunity = opportunity,
-                            minEdge = minEdgeForHour
+            .forEach { (targetDate, dayMarkets) ->
+                val dominance = evaluateDominance(
+                    dayMarkets = dayMarkets,
+                    targetDate = targetDate,
+                    cityToday = cityToday,
+                    localHour = localHour
+                )
+                if (dominance.isDominated) {
+                    dayMarkets.forEach { opportunity ->
+                        traces += DecisionTraceEntry(
+                            marketId = opportunity.marketId,
+                            question = opportunity.question,
+                            targetDate = opportunity.condition.targetDate,
+                            stage = TRACE_STAGE_DOMINANCE,
+                            status = DecisionTraceStatus.DISCARDED,
+                            reason = "Mercado dominado por probabilidad extrema",
+                            details = listOf(
+                                "Hora local: $localHour",
+                                "Max mkt YES: ${formatPercentValue(dominance.maxYesProbability ?: 0.0)}",
+                                "Umbral dominancia: ${formatPercentValue(DOMINANCE_YES_THRESHOLD)}"
+                            )
                         )
+                    }
+                    return@forEach
+                }
+
+                val minEdgeForHour = when {
+                    targetDate == cityToday && localHour >= LATE_DAY_HOUR -> LATE_DAY_MIN_EXECUTABLE_EDGE
+                    else -> CONTROL_MIN_EXECUTABLE_EDGE
+                }
+                dayMarkets.forEach { opportunity ->
+                    val decision = evaluateExecutionControl(
+                        opportunity = opportunity,
+                        minEdge = minEdgeForHour
+                    )
+                    traces += DecisionTraceEntry(
+                        marketId = opportunity.marketId,
+                        question = opportunity.question,
+                        targetDate = opportunity.condition.targetDate,
+                        stage = TRACE_STAGE_EXECUTION,
+                        status = if (decision.passes) DecisionTraceStatus.KEPT else DecisionTraceStatus.DISCARDED,
+                        reason = decision.reason,
+                        details = decision.details
+                    )
+                    if (decision.passes) {
+                        kept += opportunity
                     }
                 }
             }
-            .distinctBy { opportunity -> opportunity.marketId }
+        return RecommendationControlResult(
+            kept = kept.distinctBy { opportunity -> opportunity.marketId },
+            traces = traces
+        )
     }
 
-    private fun isMarketDominated(
+    private fun evaluateDominance(
         dayMarkets: List<TraderOpportunity>,
         targetDate: LocalDate,
         cityToday: LocalDate,
         localHour: Int
-    ): Boolean {
-        if (targetDate != cityToday) return false
-        if (localHour < DOMINANCE_CHECK_HOUR) return false
-        val maxYesProbability = dayMarkets.maxOfOrNull { it.yesPrice } ?: return false
-        return maxYesProbability >= DOMINANCE_YES_THRESHOLD
+    ): DominanceDecision {
+        if (targetDate != cityToday) return DominanceDecision(false, null)
+        if (localHour < DOMINANCE_CHECK_HOUR) return DominanceDecision(false, null)
+        val maxYesProbability = dayMarkets.maxOfOrNull { it.yesPrice } ?: return DominanceDecision(false, null)
+        return DominanceDecision(
+            isDominated = maxYesProbability >= DOMINANCE_YES_THRESHOLD,
+            maxYesProbability = maxYesProbability
+        )
     }
 
-    private fun passesExecutionControl(
+    private fun evaluateExecutionControl(
         opportunity: TraderOpportunity,
         minEdge: Double
-    ): Boolean {
-        if (!opportunity.shouldTrade) return false
+    ): ExecutionControlDecision {
+        val commonDetails = listOf(
+            "Exec: ${formatPercentValue(opportunity.executableEdge)}",
+            "Edge min: ${formatPercentValue(minEdge)}",
+            "Fill: ${formatPercentValue(opportunity.fillProbability)}",
+            "Liq: ${formatNullable(opportunity.liquidity, 0)}",
+            "Vol24h: ${formatNullable(opportunity.volume24h, 0)}",
+            "Spread: ${formatNullable(opportunity.spread, 2)}",
+            "Costes: ${formatPercentValue(opportunity.totalCost)}"
+        )
+        if (!opportunity.shouldTrade) {
+            return ExecutionControlDecision(
+                passes = false,
+                reason = "Señal base PASS: ventaja ejecutable insuficiente",
+                details = commonDetails
+            )
+        }
         val liquidity = (opportunity.liquidity ?: 0.0).coerceAtLeast(0.0)
         val volume24h = (opportunity.volume24h ?: 0.0).coerceAtLeast(0.0)
         val spread = (opportunity.spread ?: DEFAULT_SPREAD_ASSUMPTION).coerceAtLeast(0.0)
         val selectedPrice = if (opportunity.recommendedBuy == "YES") opportunity.yesPrice else opportunity.noPrice
 
-        if (liquidity < CONTROL_MIN_LIQUIDITY) return false
-        if (volume24h < CONTROL_MIN_VOLUME_24H) return false
-        if (spread > CONTROL_MAX_SPREAD) return false
-        if (opportunity.totalCost > CONTROL_MAX_TOTAL_COST) return false
-        if (opportunity.fillProbability < CONTROL_MIN_FILL) return false
-        if (opportunity.executableEdge < minEdge) return false
-        if (selectedPrice !in CONTROL_MIN_ENTRY_PRICE..CONTROL_MAX_ENTRY_PRICE) return false
+        return when {
+            liquidity < CONTROL_MIN_LIQUIDITY -> ExecutionControlDecision(
+                passes = false,
+                reason = "Liquidez insuficiente",
+                details = commonDetails + "Min liquidez: ${formatNullable(CONTROL_MIN_LIQUIDITY, 0)}"
+            )
+            volume24h < CONTROL_MIN_VOLUME_24H -> ExecutionControlDecision(
+                passes = false,
+                reason = "Volumen 24h insuficiente",
+                details = commonDetails + "Min vol24h: ${formatNullable(CONTROL_MIN_VOLUME_24H, 0)}"
+            )
+            spread > CONTROL_MAX_SPREAD -> ExecutionControlDecision(
+                passes = false,
+                reason = "Spread demasiado alto",
+                details = commonDetails + "Max spread: ${formatNullable(CONTROL_MAX_SPREAD, 2)}"
+            )
+            opportunity.totalCost > CONTROL_MAX_TOTAL_COST -> ExecutionControlDecision(
+                passes = false,
+                reason = "Costes totales no viables",
+                details = commonDetails + "Max costes: ${formatPercentValue(CONTROL_MAX_TOTAL_COST)}"
+            )
+            opportunity.fillProbability < CONTROL_MIN_FILL -> ExecutionControlDecision(
+                passes = false,
+                reason = "Probabilidad de fill baja",
+                details = commonDetails + "Min fill: ${formatPercentValue(CONTROL_MIN_FILL)}"
+            )
+            opportunity.executableEdge < minEdge -> ExecutionControlDecision(
+                passes = false,
+                reason = "Edge ejecutable por debajo del mínimo",
+                details = commonDetails
+            )
+            selectedPrice !in CONTROL_MIN_ENTRY_PRICE..CONTROL_MAX_ENTRY_PRICE -> ExecutionControlDecision(
+                passes = false,
+                reason = "Precio de entrada fuera de rango",
+                details = commonDetails + "Precio entrada: ${formatPercentValue(selectedPrice)}"
+            )
+            else -> ExecutionControlDecision(
+                passes = true,
+                reason = "Mantenido: pasa control de ejecución",
+                details = commonDetails + "Entrada recomendada: ${opportunity.recommendedBuy}"
+            )
+        }
+    }
 
-        return true
+    private fun formatPercentValue(value: Double): String {
+        return String.format(Locale.US, "%.1f%%", value * 100.0)
+    }
+
+    private fun formatNullable(value: Double?, decimals: Int): String {
+        value ?: return "--"
+        return when (decimals) {
+            0 -> String.format(Locale.US, "%.0f", value)
+            1 -> String.format(Locale.US, "%.1f", value)
+            2 -> String.format(Locale.US, "%.2f", value)
+            else -> String.format(Locale.US, "%.${decimals}f", value)
+        }
+    }
+
+    internal fun applyRecommendationControlsForTesting(
+        opportunities: List<TraderOpportunity>,
+        cityToday: LocalDate,
+        localHour: Int
+    ): List<DecisionTraceEntry> {
+        return applyRecommendationControls(
+            opportunities = opportunities,
+            cityToday = cityToday,
+            localHour = localHour
+        ).traces
+    }
+
+    internal fun evaluateDominanceForTesting(
+        dayMarkets: List<TraderOpportunity>,
+        targetDate: LocalDate,
+        cityToday: LocalDate,
+        localHour: Int
+    ): Boolean {
+        return evaluateDominance(
+            dayMarkets = dayMarkets,
+            targetDate = targetDate,
+            cityToday = cityToday,
+            localHour = localHour
+        ).isDominated
     }
 
     private fun logistic(x: Double): Double = 1.0 / (1.0 + exp(-x))
 
     private fun parseConditionFromQuestion(question: String, cityZoneId: String): MarketRangeCondition? {
-        val geRegex = Regex(
-            """be\s*(-?\d+(?:\.\d+)?)\s*[°º]?\s*([CF])\s*or\s*higher\s*on\s*([A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*\d{4})?)""",
-            RegexOption.IGNORE_CASE
+        return PolymarketConditionParser.parseConditionFromQuestion(
+            question = question,
+            cityZoneId = cityZoneId
         )
-        val leRegex = Regex(
-            """be\s*(-?\d+(?:\.\d+)?)\s*[°º]?\s*([CF])\s*or\s*below\s*on\s*([A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*\d{4})?)""",
-            RegexOption.IGNORE_CASE
-        )
-        val betweenRegex = Regex(
-            """be\s*between\s*(-?\d+(?:\.\d+)?)\s*[-–]\s*(-?\d+(?:\.\d+)?)\s*[°º]?\s*([CF])\s*on\s*([A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*\d{4})?)""",
-            RegexOption.IGNORE_CASE
-        )
-        val exactRegex = Regex(
-            """be\s*(-?\d+(?:\.\d+)?)\s*[°º]?\s*([CF])\s*on\s*([A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?(?:,\s*\d{4})?)""",
-            RegexOption.IGNORE_CASE
-        )
-
-        geRegex.find(question)?.let { return buildCondition(it, MarketConditionType.GREATER_OR_EQUAL, cityZoneId) }
-        leRegex.find(question)?.let { return buildCondition(it, MarketConditionType.LESS_OR_EQUAL, cityZoneId) }
-        betweenRegex.find(question)?.let { return buildBetweenCondition(it, cityZoneId) }
-        exactRegex.find(question)?.let { return buildCondition(it, MarketConditionType.EXACT, cityZoneId) }
-
-        return null
-    }
-
-    private fun buildCondition(
-        match: MatchResult,
-        type: MarketConditionType,
-        cityZoneId: String
-    ): MarketRangeCondition? {
-        val threshold = match.groupValues.getOrNull(1)?.toDoubleOrNull() ?: return null
-        val unit = if (match.groupValues.getOrNull(2).equals("F", ignoreCase = true)) TempUnit.F else TempUnit.C
-        val rawDate = match.groupValues.getOrNull(3).orEmpty()
-        val targetDate = parseMonthDayDate(rawDate, cityZoneId)
-
-        return MarketRangeCondition(
-            type = type,
-            threshold = threshold,
-            upperThreshold = null,
-            unit = unit,
-            targetDate = targetDate
-        )
-    }
-
-    private fun buildBetweenCondition(
-        match: MatchResult,
-        cityZoneId: String
-    ): MarketRangeCondition? {
-        val first = match.groupValues.getOrNull(1)?.toDoubleOrNull() ?: return null
-        val second = match.groupValues.getOrNull(2)?.toDoubleOrNull() ?: return null
-        val lower = minOf(first, second)
-        val upper = maxOf(first, second)
-        val unit = if (match.groupValues.getOrNull(3).equals("F", ignoreCase = true)) TempUnit.F else TempUnit.C
-        val rawDate = match.groupValues.getOrNull(4).orEmpty()
-
-        return MarketRangeCondition(
-            type = MarketConditionType.BETWEEN,
-            threshold = lower,
-            upperThreshold = upper,
-            unit = unit,
-            targetDate = parseMonthDayDate(rawDate, cityZoneId)
-        )
-    }
-
-    private fun parseMonthDayDate(raw: String, cityZoneId: String): LocalDate? {
-        val zoneId = ZoneId.of(cityZoneId)
-        val today = LocalDate.now(zoneId)
-        val value = raw.trim()
-            .replace(Regex("(?i)(\\d{1,2})(st|nd|rd|th)"), "$1")
-            .replace(",", " ")
-            .replace(Regex("\\s+"), " ")
-        val formattersWithYear = listOf(
-            DateTimeFormatter.ofPattern("MMMM d uuuu", Locale.ENGLISH),
-            DateTimeFormatter.ofPattern("MMM d uuuu", Locale.ENGLISH)
-        )
-        val formattersWithoutYear = listOf(
-            DateTimeFormatter.ofPattern("MMMM d", Locale.ENGLISH),
-            DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH)
-        )
-
-        val candidates = mutableListOf<LocalDate>()
-        val yearsToTry = listOf(today.year - 1, today.year, today.year + 1)
-
-        formattersWithYear.forEach { formatter ->
-            val parsed = runCatching { LocalDate.parse(value, formatter) }.getOrNull()
-            if (parsed != null) {
-                candidates += parsed
-            }
-        }
-
-        formattersWithoutYear.forEach { formatter ->
-            val parsed = runCatching { LocalDate.parse(value, formatter) }.getOrNull()
-            if (parsed != null) {
-                yearsToTry.forEach { year ->
-                    candidates += parsed.withYear(year)
-                }
-            }
-        }
-
-        if (candidates.isEmpty()) {
-            formattersWithYear.forEach { formatter ->
-                yearsToTry.forEach { year ->
-                    val withYear = "$value $year"
-                    val parsed = runCatching { LocalDate.parse(withYear, formatter) }.getOrNull()
-                    if (parsed != null) {
-                        candidates += parsed
-                    }
-                }
-            }
-        }
-
-        if (candidates.isEmpty()) return null
-        return candidates.minByOrNull { abs(java.time.temporal.ChronoUnit.DAYS.between(today, it)) }
     }
 
     private fun parseStringArray(raw: String?): List<String> {
@@ -831,6 +889,22 @@ class PolymarketSource(
         val errors: List<String>
     )
 
+    private data class RecommendationControlResult(
+        val kept: List<TraderOpportunity>,
+        val traces: List<DecisionTraceEntry>
+    )
+
+    private data class DominanceDecision(
+        val isDominated: Boolean,
+        val maxYesProbability: Double?
+    )
+
+    private data class ExecutionControlDecision(
+        val passes: Boolean,
+        val reason: String,
+        val details: List<String>
+    )
+
     private companion object {
         const val ASSUMED_ROUNDTRIP_FEE_RATE = 0.018
         const val DEFAULT_SPREAD_ASSUMPTION = 0.020
@@ -858,5 +932,9 @@ class PolymarketSource(
         const val LATE_DAY_MIN_EXECUTABLE_EDGE = 0.035
         const val DOMINANCE_CHECK_HOUR = 13
         const val DOMINANCE_YES_THRESHOLD = 0.95
+
+        const val TRACE_STAGE_INPUT = "INPUT"
+        const val TRACE_STAGE_EXECUTION = "EXECUTION_CONTROL"
+        const val TRACE_STAGE_DOMINANCE = "DOMINANCE"
     }
 }

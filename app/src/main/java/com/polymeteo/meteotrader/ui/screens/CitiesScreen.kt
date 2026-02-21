@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items as lazyItems
@@ -54,6 +55,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.polymeteo.meteotrader.data.CityCatalog
+import com.polymeteo.meteotrader.data.model.CityConfig
 import com.polymeteo.meteotrader.data.model.CityWeatherData
 import com.polymeteo.meteotrader.data.model.SourceStatus
 import com.polymeteo.meteotrader.data.model.TempUnit
@@ -173,35 +176,23 @@ fun CitiesScreen(
             onRefresh = onRefresh,
             modifier = Modifier.fillMaxSize()
         ) {
-            when {
-                state.isLoading && state.cities.isEmpty() -> {
+            if (state.appMode == AppMode.EXPERT) {
+                CitiesGrid(
+                    cityConfigs = CityCatalog.cities,
+                    cities = state.cities,
+                    cityLoadingIds = state.cityLoadingIds,
+                    onCitySelected = onCitySelected
+                )
+            } else {
+                if (state.cities.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                     }
-                }
-
-                state.cities.isEmpty() -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "No hay datos todavía",
-                            color = MutedInk,
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                    }
-                }
-
-                else -> {
-                    if (state.appMode == AppMode.EXPERT) {
-                        CitiesGrid(
-                            cities = state.cities,
-                            onCitySelected = onCitySelected
-                        )
-                    } else {
-                        RookieOpportunitiesList(
-                            cities = state.cities,
-                            strategyMode = state.strategyMode
-                        )
-                    }
+                } else {
+                    RookieOpportunitiesList(
+                        cities = state.cities,
+                        strategyMode = state.strategyMode
+                    )
                 }
             }
         }
@@ -298,9 +289,12 @@ private fun RookieHeader(
 
 @Composable
 private fun CitiesGrid(
+    cityConfigs: List<CityConfig>,
     cities: List<CityWeatherData>,
+    cityLoadingIds: Set<String>,
     onCitySelected: (String) -> Unit
 ) {
+    val citiesById = remember(cities) { cities.associateBy { it.city.id } }
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -317,13 +311,18 @@ private fun CitiesGrid(
             verticalArrangement = Arrangement.spacedBy(spacing),
             userScrollEnabled = true
         ) {
-            items(cities, key = { it.city.id }) { cityData ->
+            items(cityConfigs, key = { it.id }) { cityConfig ->
+                val cityData = citiesById[cityConfig.id]
+                val isLoading = cityLoadingIds.contains(cityConfig.id)
+                val canOpenDetail = cityData != null && !isLoading && !cityData.isClosedBySchedule
                 CityCard(
+                    city = cityConfig,
                     data = cityData,
+                    isLoading = isLoading,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(cardHeight)
-                        .clickable(enabled = !cityData.isClosedBySchedule) { onCitySelected(cityData.city.id) }
+                        .clickable(enabled = canOpenDetail) { onCitySelected(cityConfig.id) }
                 )
             }
         }
@@ -552,23 +551,27 @@ private fun buildPolymarketEventUrl(
 
 @Composable
 private fun CityCard(
-    data: CityWeatherData,
+    city: CityConfig,
+    data: CityWeatherData?,
+    isLoading: Boolean,
     modifier: Modifier = Modifier
  ) {
-    val isScheduleClosed = data.isClosedBySchedule
-    val current = data.metarCurrentInUnit()
-    val delta = data.metarDeltaInUnit()
-    val control = data.controlTempInUnit()
-    val poly = data.polyTempInUnit()
+    val isDataReady = data != null
+    val isScheduleClosed = data?.isClosedBySchedule == true
+    val current = data?.metarCurrentInUnit()
+    val delta = data?.metarDeltaInUnit()
+    val control = data?.controlTempInUnit()
+    val poly = data?.polyTempInUnit()
     val cardBackground = if (isScheduleClosed) Color(0xFF1A2431) else DarkPanel
     val cardBorder = if (isScheduleClosed) Color(0x338EA2B7) else Color(0x33FFFFFF)
     val primaryTextColor = if (isScheduleClosed) MutedInk else MaterialTheme.colorScheme.onSurface
     val polyColor = when {
+        !isDataReady -> MutedInk
         isScheduleClosed -> MutedInk
-        data.polyTempInvalid -> Negative
+        data?.polyTempInvalid == true -> Negative
         else -> MaterialTheme.colorScheme.onSurface
     }
-    val topTrader = data.polymarket.topOpportunity
+    val topTrader = data?.polymarket?.topOpportunity
 
     val deltaColor = when {
         delta == null -> Neutral
@@ -590,7 +593,7 @@ private fun CityCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = data.city.name,
+                text = city.name,
                 style = MaterialTheme.typography.titleMedium,
                 color = primaryTextColor,
                 maxLines = 1,
@@ -598,7 +601,7 @@ private fun CityCard(
                 modifier = Modifier.weight(1f)
             )
             Text(
-                text = data.localTime,
+                text = data?.localTime ?: "--:--",
                 style = MaterialTheme.typography.labelSmall,
                 color = MutedInk
             )
@@ -610,30 +613,47 @@ private fun CityCard(
         ) {
             InlineMetric(
                 label = "M",
-                value = formatTemperature(current, data.city.displayUnit, digits = 0),
+                value = formatTemperature(current, city.displayUnit, digits = 0),
                 modifier = Modifier.weight(1f)
             )
             InlineMetric(
                 label = "Δ",
-                value = formatCompactDelta(delta, data.city.displayUnit),
+                value = formatCompactDelta(delta, city.displayUnit),
                 valueColor = if (isScheduleClosed) MutedInk else deltaColor,
                 modifier = Modifier.weight(1f)
             )
             InlineMetric(
                 label = "S",
-                value = formatTemperature(control, data.city.displayUnit, digits = 0),
+                value = formatTemperature(control, city.displayUnit, digits = 0),
                 modifier = Modifier.weight(1f),
                 valueColor = if (isScheduleClosed) MutedInk else MaterialTheme.colorScheme.onSurface
             )
             InlineMetric(
                 label = "P",
-                value = formatTemperature(poly, data.city.displayUnit, digits = 0),
+                value = formatTemperature(poly, city.displayUnit, digits = 0),
                 valueColor = polyColor,
                 modifier = Modifier.weight(1f)
             )
         }
 
-        if (isScheduleClosed) {
+        if (!isDataReady && isLoading) {
+            CityStatusRow(
+                text = "Cargando datos...",
+                color = MutedInk,
+                showSpinner = true
+            )
+        } else if (!isDataReady) {
+            CityStatusRow(
+                text = "Sin datos",
+                color = Neutral
+            )
+        } else if (isLoading) {
+            CityStatusRow(
+                text = "Actualizando...",
+                color = MutedInk,
+                showSpinner = true
+            )
+        } else if (isScheduleClosed) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -681,6 +701,39 @@ private fun CityCard(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun CityStatusRow(
+    text: String,
+    color: Color,
+    showSpinner: Boolean = false
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(color.copy(alpha = 0.10f))
+            .border(1.dp, color.copy(alpha = 0.55f))
+            .padding(horizontal = 6.dp, vertical = 3.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (showSpinner) {
+            CircularProgressIndicator(
+                modifier = Modifier
+                    .padding(end = 6.dp)
+                    .size(10.dp),
+                strokeWidth = 1.5.dp,
+                color = color
+            )
+        }
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+            color = color,
+            maxLines = 1
+        )
     }
 }
 

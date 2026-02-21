@@ -3,17 +3,25 @@ package com.polymeteo.meteotrader.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.polymeteo.meteotrader.data.CityCatalog
 import com.polymeteo.meteotrader.data.WeatherRepository
 import com.polymeteo.meteotrader.data.model.BacktestReport
 import com.polymeteo.meteotrader.data.model.CityWeatherData
 import com.polymeteo.meteotrader.data.model.PolyTempPremiumReport
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import java.time.Instant
 
 enum class AppMode {
@@ -31,6 +39,7 @@ data class MeteoUiState(
     val isRefreshing: Boolean = false,
     val isBacktestRefreshing: Boolean = false,
     val cities: List<CityWeatherData> = emptyList(),
+    val cityLoadingIds: Set<String> = CityCatalog.cities.map { it.id }.toSet(),
     val lastUpdatedAt: Instant? = null,
     val errorMessage: String? = null,
     val backtestErrorMessage: String? = null,
@@ -70,30 +79,72 @@ class MeteoViewModel(
         if (refreshJob?.isActive == true) return
         premiumWarmupJob?.cancel()
         refreshJob = viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(
-                isLoading = initialLoad,
-                isRefreshing = !initialLoad,
-                errorMessage = null
-            )
+            val cityCatalog = CityCatalog.cities
+            val cityIds = cityCatalog.map { it.id }.toSet()
+            _uiState.update { current ->
+                current.copy(
+                    isLoading = true,
+                    isRefreshing = !initialLoad,
+                    errorMessage = null,
+                    cityLoadingIds = cityIds,
+                    cities = if (initialLoad) emptyList() else current.cities
+                )
+            }
 
+            val loadErrors = mutableListOf<String>()
             runCatching {
-                repository.fetchAllCities()
-            }.onSuccess { cities ->
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    isRefreshing = false,
-                    cities = cities,
-                    lastUpdatedAt = Instant.now(),
-                    errorMessage = null
-                )
-                launchBacktestRefresh(cities)
-                launchPremiumWarmup(cities)
+                coroutineScope {
+                    val semaphore = Semaphore(MAX_CITY_REFRESH_CONCURRENCY)
+                    val jobs = cityCatalog.map { city ->
+                        launch {
+                            try {
+                                semaphore.withPermit {
+                                    runCatching {
+                                        withContext(Dispatchers.Default) {
+                                            repository.fetchCity(city)
+                                        }
+                                    }.onSuccess { cityData ->
+                                        applyCityUpdate(cityData)
+                                    }.onFailure { throwable ->
+                                        if (throwable !is CancellationException) {
+                                            synchronized(loadErrors) {
+                                                loadErrors += "${city.name}: ${throwable.message ?: "No se pudo actualizar"}"
+                                            }
+                                        }
+                                    }
+                                }
+                            } finally {
+                                setCityLoading(city.id, false)
+                            }
+                        }
+                    }
+                    jobs.joinAll()
+                }
             }.onFailure { throwable ->
-                _uiState.value = _uiState.value.copy(
+                if (throwable !is CancellationException) {
+                    synchronized(loadErrors) {
+                        loadErrors += throwable.message ?: "No se pudo actualizar"
+                    }
+                }
+            }
+
+            val loadedCities = _uiState.value.cities
+            _uiState.update { current ->
+                current.copy(
                     isLoading = false,
                     isRefreshing = false,
-                    errorMessage = throwable.message ?: "No se pudo actualizar"
+                    lastUpdatedAt = if (loadedCities.isNotEmpty()) Instant.now() else current.lastUpdatedAt,
+                    errorMessage = when {
+                        loadErrors.isEmpty() -> null
+                        loadedCities.isEmpty() -> loadErrors.joinToString(" | ")
+                        else -> "Algunas ciudades fallaron (${loadErrors.size}). Reintenta para completar."
+                    }
                 )
+            }
+
+            if (loadedCities.isNotEmpty()) {
+                launchBacktestRefresh(loadedCities)
+                launchPremiumWarmup(loadedCities)
             }
         }
     }
@@ -101,19 +152,25 @@ class MeteoViewModel(
     fun refreshCity(cityId: String) {
         if (cityRefreshJobs[cityId]?.isActive == true) return
         cityRefreshJobs[cityId] = viewModelScope.launch {
+            setCityLoading(cityId, true)
             try {
                 runCatching {
-                    repository.fetchCityById(cityId)
+                    withContext(Dispatchers.Default) {
+                        repository.fetchCityById(cityId)
+                    }
                 }.onSuccess { cityData ->
                     if (cityData == null) return@onSuccess
                     val updated = applyCityUpdate(cityData)
                     launchBacktestRefresh(updated)
                 }.onFailure { throwable ->
-                    _uiState.value = _uiState.value.copy(
-                        errorMessage = throwable.message ?: "No se pudo actualizar la ciudad"
-                    )
+                    _uiState.update { current ->
+                        current.copy(
+                            errorMessage = throwable.message ?: "No se pudo actualizar la ciudad"
+                        )
+                    }
                 }
             } finally {
+                setCityLoading(cityId, false)
                 cityRefreshJobs.remove(cityId)
             }
         }
@@ -180,7 +237,7 @@ class MeteoViewModel(
 
     private fun launchPremiumWarmup(cities: List<CityWeatherData>) {
         premiumWarmupJob?.cancel()
-        premiumWarmupJob = viewModelScope.launch {
+        premiumWarmupJob = viewModelScope.launch(Dispatchers.Default) {
             for (city in cities) {
                 if (!isActive) break
                 val cityId = city.city.id
@@ -206,7 +263,11 @@ class MeteoViewModel(
                         premiumErrorsByCity = _uiState.value.premiumErrorsByCity - cityId
                     )
 
-                    runCatching { repository.fetchCityById(cityId) }.onSuccess { updatedCity ->
+                    runCatching {
+                        withContext(Dispatchers.Default) {
+                            repository.fetchCityById(cityId)
+                        }
+                    }.onSuccess { updatedCity ->
                         if (updatedCity != null) {
                             applyCityUpdate(updatedCity)
                         }
@@ -257,7 +318,9 @@ class MeteoViewModel(
                         premiumErrorsByCity = _uiState.value.premiumErrorsByCity - cityId
                     )
                     runCatching {
-                        repository.fetchCityById(cityId)
+                        withContext(Dispatchers.Default) {
+                            repository.fetchCityById(cityId)
+                        }
                     }.onSuccess { cityData ->
                         if (cityData != null) {
                             applyCityUpdate(cityData)
@@ -282,19 +345,38 @@ class MeteoViewModel(
     }
 
     private fun applyCityUpdate(cityData: CityWeatherData): List<CityWeatherData> {
-        val updated = _uiState.value.cities.toMutableList()
-        val index = updated.indexOfFirst { it.city.id == cityData.city.id }
-        if (index >= 0) {
-            updated[index] = cityData
-        } else {
-            updated += cityData
+        var sorted = emptyList<CityWeatherData>()
+        _uiState.update { current ->
+            val updated = current.cities.toMutableList()
+            val index = updated.indexOfFirst { it.city.id == cityData.city.id }
+            if (index >= 0) {
+                updated[index] = cityData
+            } else {
+                updated += cityData
+            }
+            val orderById = CityCatalog.cities
+                .mapIndexed { idx, config -> config.id to idx }
+                .toMap()
+            sorted = updated.sortedBy { city -> orderById[city.city.id] ?: Int.MAX_VALUE }
+            current.copy(
+                cities = sorted,
+                lastUpdatedAt = Instant.now()
+            )
         }
-        _uiState.value = _uiState.value.copy(
-            cities = updated,
-            lastUpdatedAt = Instant.now(),
-            errorMessage = null
-        )
-        return updated
+        return sorted
+    }
+
+    private fun setCityLoading(cityId: String, loading: Boolean) {
+        _uiState.update { current ->
+            val next = if (loading) {
+                current.cityLoadingIds + cityId
+            } else {
+                current.cityLoadingIds - cityId
+            }
+            current.copy(
+                cityLoadingIds = next
+            )
+        }
     }
 
     fun setAppMode(mode: AppMode) {
@@ -309,6 +391,8 @@ class MeteoViewModel(
         preferencesStore.saveStrategyMode(mode)
     }
 }
+
+private const val MAX_CITY_REFRESH_CONCURRENCY = 4
 
 class MeteoViewModelFactory(
     private val repository: WeatherRepository,

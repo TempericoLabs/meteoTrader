@@ -33,6 +33,18 @@ enum class TraderSignalLevel {
     RED
 }
 
+enum class DecisionTraceStatus {
+    KEPT,
+    DISCARDED
+}
+
+enum class PremiumComputationSource {
+    PREFERENCES_CACHE,
+    RECALCULATED,
+    BUILDING,
+    UNAVAILABLE
+}
+
 data class CityConfig(
     val id: String,
     val name: String,
@@ -96,7 +108,8 @@ data class ForecastHorizonData(
     val polyTempPremiumC: Double?,
     val polyTempPremiumF: Double?,
     val polyTempPremiumInvalid: Boolean,
-    val polyTempPremiumReady: Boolean
+    val polyTempPremiumReady: Boolean,
+    val polyTempPremiumSource: PremiumComputationSource = PremiumComputationSource.UNAVAILABLE
 )
 
 data class MarketRangeCondition(
@@ -132,13 +145,24 @@ data class TraderOpportunity(
     val spread: Double?
 )
 
+data class DecisionTraceEntry(
+    val marketId: String,
+    val question: String,
+    val targetDate: LocalDate?,
+    val stage: String,
+    val status: DecisionTraceStatus,
+    val reason: String,
+    val details: List<String> = emptyList()
+)
+
 data class PolymarketSnapshot(
     val query: String,
     val fetchedAt: Instant,
     val marketsScanned: Int,
     val opportunities: List<TraderOpportunity>,
     val topOpportunity: TraderOpportunity?,
-    val error: String?
+    val error: String?,
+    val decisionTrace: List<DecisionTraceEntry> = emptyList()
 )
 
 data class CityWeatherData(

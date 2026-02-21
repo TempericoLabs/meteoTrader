@@ -44,7 +44,10 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.polymeteo.meteotrader.data.model.CityWeatherData
+import com.polymeteo.meteotrader.data.model.DecisionTraceEntry
+import com.polymeteo.meteotrader.data.model.DecisionTraceStatus
 import com.polymeteo.meteotrader.data.model.ForecastSourceResult
+import com.polymeteo.meteotrader.data.model.PremiumComputationSource
 import com.polymeteo.meteotrader.data.model.SourceStatus
 import com.polymeteo.meteotrader.data.model.TempUnit
 import com.polymeteo.meteotrader.data.model.TraderDirection
@@ -181,7 +184,8 @@ fun CityDetailScreen(
             val polyTempInvalid = selectedHorizon?.polyTempInvalid == true
             val polyTempPremiumReady = selectedHorizon?.polyTempPremiumReady == true
             val polyTempPremiumInvalid = selectedHorizon?.polyTempPremiumInvalid == true
-            val activeModelUsesPremium = polyTempPremiumReady && !isPremiumCalibrating
+            val polyTempPremiumSource = selectedHorizon?.polyTempPremiumSource ?: PremiumComputationSource.UNAVAILABLE
+            val activeModelUsesPremium = polyTempPremiumReady
             val activeModelInvalid = if (activeModelUsesPremium) {
                 polyTempPremiumInvalid
             } else {
@@ -189,7 +193,7 @@ fun CityDetailScreen(
             }
             val polyDisplayColor = if (polyTempInvalid) Negative else Positive
             val polyPremiumDisplayColor = when {
-                !polyTempPremiumReady || isPremiumCalibrating -> MutedInk
+                !polyTempPremiumReady -> MutedInk
                 polyTempPremiumInvalid -> Negative
                 else -> Positive
             }
@@ -197,13 +201,29 @@ fun CityDetailScreen(
                 temperature = polyWithSecondaryUnit,
                 invalid = polyTempInvalid
             )
-            val polyPremiumDisplayValue = if (!polyTempPremiumReady || isPremiumCalibrating) {
+            val polyPremiumDisplayValue = if (!polyTempPremiumReady) {
                 "CALCULANDO..."
             } else {
                 appendForecastInvalidSuffix(
                     temperature = polyPremiumWithSecondaryUnit,
                     invalid = polyTempPremiumInvalid
                 )
+            }
+            val premiumSourceLabel = when {
+                !polyTempPremiumReady || polyTempPremiumSource == PremiumComputationSource.BUILDING ->
+                    "MMA en construcción (sin cache válida todavía)"
+                isPremiumCalibrating ->
+                    "MMA disponible (actualizando en segundo plano)"
+                polyTempPremiumSource == PremiumComputationSource.PREFERENCES_CACHE ->
+                    "MMA leída de preferencias (sesión anterior)"
+                polyTempPremiumSource == PremiumComputationSource.RECALCULATED ->
+                    "MMA recalculada en esta sesión"
+                else -> "MMA sin cache previa"
+            }
+            val premiumSourceColor = if (polyTempPremiumSource == PremiumComputationSource.PREFERENCES_CACHE) {
+                Color(0xFF8FC8FF)
+            } else {
+                MutedInk
             }
             val observedMaxLabel = formatTemperature(observedMaxInDisplayUnit, unit)
             val metarActualValue = if (isTodayTab) {
@@ -243,6 +263,16 @@ fun CityDetailScreen(
             } else {
                 selectedCandidates.sortedByDescending { it.executableEdge }
             }
+            val selectedDecisionTrace = cityData.polymarket.decisionTrace
+                .filter { trace ->
+                    val traceDate = trace.targetDate ?: cityToday
+                    traceDate == selectedTab.date
+                }
+                .sortedWith(
+                    compareBy<DecisionTraceEntry> { trace ->
+                        if (trace.status == DecisionTraceStatus.DISCARDED) 0 else 1
+                    }.thenBy { trace -> trace.stage }
+                )
             val opportunitiesByDate = cityData.polymarket.opportunities.groupBy { it.condition.targetDate }
 
             LazyColumn(
@@ -279,6 +309,12 @@ fun CityDetailScreen(
                             value = polyPremiumDisplayValue,
                             valueColor = polyPremiumDisplayColor,
                             onClick = onOpenPolyTempPremium
+                        )
+                        Text(
+                            text = premiumSourceLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = premiumSourceColor,
+                            modifier = Modifier.padding(top = 2.dp)
                         )
                         if (activeModelInvalid) {
                             Text(
@@ -376,6 +412,13 @@ fun CityDetailScreen(
                         selectedIndex = selectedDayIndex,
                         onSelectedIndexChanged = { selectedDayIndex = it },
                         opportunitiesByDate = opportunitiesByDate
+                    )
+                }
+
+                item {
+                    OperationalTraceabilityCard(
+                        selectedDayTitle = selectedTab.title,
+                        traces = selectedDecisionTrace
                     )
                 }
 
@@ -742,6 +785,67 @@ private fun TraderDaySelector(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun OperationalTraceabilityCard(
+    selectedDayTitle: String,
+    traces: List<DecisionTraceEntry>
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .background(Color(0x101C2EFF))
+            .border(1.dp, Color(0x2F77C4FF))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(
+            text = "Trazabilidad operativa ($selectedDayTitle)",
+            style = MaterialTheme.typography.titleSmall,
+            color = Color(0xFF8FC8FF)
+        )
+        if (traces.isEmpty()) {
+            Text(
+                text = "Sin trazas de decisión para este día.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedInk
+            )
+        } else {
+            traces.take(12).forEach { trace ->
+                val statusColor = if (trace.status == DecisionTraceStatus.KEPT) Positive else Negative
+                val statusLabel = if (trace.status == DecisionTraceStatus.KEPT) "MANTENIDO" else "DESCARTADO"
+                Text(
+                    text = "$statusLabel • ${traceStageLabel(trace.stage)}",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = statusColor
+                )
+                Text(
+                    text = trace.reason,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                if (trace.details.isNotEmpty()) {
+                    Text(
+                        text = trace.details.take(3).joinToString(" • "),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MutedInk
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun traceStageLabel(stage: String): String {
+    return when (stage) {
+        "INPUT" -> "Entrada modelo"
+        "EXECUTION_CONTROL" -> "Control ejecución"
+        "DOMINANCE" -> "Dominancia"
+        "LIVE_VIABILITY" -> "Viabilidad en vivo"
+        else -> stage
     }
 }
 
