@@ -56,8 +56,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.polymeteo.meteotrader.data.CityCatalog
+import com.polymeteo.meteotrader.data.forecast.ForecastWeights
 import com.polymeteo.meteotrader.data.model.CityConfig
 import com.polymeteo.meteotrader.data.model.CityWeatherData
+import com.polymeteo.meteotrader.data.model.PolyTempPremiumReport
 import com.polymeteo.meteotrader.data.model.SourceStatus
 import com.polymeteo.meteotrader.data.model.TempUnit
 import com.polymeteo.meteotrader.data.model.TraderOpportunity
@@ -85,6 +87,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -191,7 +194,9 @@ fun CitiesScreen(
                 } else {
                     RookieOpportunitiesList(
                         cities = state.cities,
-                        strategyMode = state.strategyMode
+                        strategyMode = state.strategyMode,
+                        premiumReportsByCity = state.premiumReportsByCity,
+                        premiumRefreshingCityIds = state.premiumRefreshingCityIds
                     )
                 }
             }
@@ -332,14 +337,28 @@ private fun CitiesGrid(
 @Composable
 private fun RookieOpportunitiesList(
     cities: List<CityWeatherData>,
-    strategyMode: StrategyMode
+    strategyMode: StrategyMode,
+    premiumReportsByCity: Map<String, PolyTempPremiumReport>,
+    premiumRefreshingCityIds: Set<String>
 ) {
     val uriHandler = LocalUriHandler.current
-    val opportunities = remember(cities, strategyMode) {
-        buildRookieOpportunities(cities, strategyMode)
+    val opportunities = remember(cities, strategyMode, premiumReportsByCity) {
+        buildRookieOpportunities(
+            cities = cities,
+            strategyMode = strategyMode,
+            premiumReportsByCity = premiumReportsByCity
+        )
     }
 
     if (opportunities.isEmpty()) {
+        val isAnyPremiumLoading = cities.any { city ->
+            city.city.id in premiumRefreshingCityIds
+        }
+        val emptyMessage = if (isAnyPremiumLoading) {
+            "Estamos terminando de ajustar la MMA con histórico. En cuanto acabe, verás solo entradas claras."
+        } else {
+            "Ahora mismo no veo una entrada clara con calidad suficiente. Mejor esperar que forzar una apuesta."
+        }
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -347,7 +366,7 @@ private fun RookieOpportunitiesList(
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "Ahora mismo no veo una entrada clara para esta estrategia. Mejor esperar que forzar una apuesta.",
+                text = emptyMessage,
                 style = MaterialTheme.typography.bodyLarge,
                 color = MutedInk,
                 textAlign = TextAlign.Center
@@ -398,7 +417,7 @@ private fun RookieOpportunityCard(
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Text(
-            text = candidate.actionLabel,
+            text = candidate.actionTitle,
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
             color = signalColor
         )
@@ -413,14 +432,29 @@ private fun RookieOpportunityCard(
             color = MaterialTheme.colorScheme.onSurface
         )
         Text(
-            text = "Recomendación simple: comprar ${if (candidate.opportunity.recommendedBuy == "YES") "Sí" else "No"}",
+            text = "Acción sugerida: comprar ${if (candidate.opportunity.recommendedBuy == "YES") "SÍ" else "NO"}",
             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
             color = MaterialTheme.colorScheme.onSurface
         )
         Text(
-            text = candidate.clarityLabel,
+            text = candidate.mmaSummary,
             style = MaterialTheme.typography.bodyMedium,
             color = MutedInk
+        )
+        Text(
+            text = candidate.dominantModelSummary,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MutedInk
+        )
+        Text(
+            text = candidate.whyItIsInteresting,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MutedInk
+        )
+        Text(
+            text = candidate.profitSummary,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.onSurface
         )
         Text(
             text = "Abrir este mercado en Polymarket",
@@ -435,35 +469,95 @@ private data class RookieOpportunityCandidate(
     val cityName: String,
     val dayLabel: String,
     val marketUrl: String,
-    val actionLabel: String,
-    val clarityLabel: String,
+    val actionTitle: String,
+    val mmaSummary: String,
+    val dominantModelSummary: String,
+    val whyItIsInteresting: String,
+    val profitSummary: String,
     val opportunity: TraderOpportunity
 )
 
 private fun buildRookieOpportunities(
     cities: List<CityWeatherData>,
-    strategyMode: StrategyMode
+    strategyMode: StrategyMode,
+    premiumReportsByCity: Map<String, PolyTempPremiumReport>
 ): List<RookieOpportunityCandidate> {
     return cities
         .asSequence()
         .filter { city -> !city.isClosedBySchedule }
         .flatMap { city ->
+            val report = premiumReportsByCity[city.city.id]
+            val dominantModel = report
+                ?.providerRanking
+                ?.filterNot { stat ->
+                    ForecastWeights.isDeprecatedProvider(stat.providerId, stat.providerName)
+                }
+                ?.maxByOrNull { stat -> stat.dynamicWeight }
+
+            val dominantShare = report
+                ?.providerRanking
+                ?.filterNot { stat ->
+                    ForecastWeights.isDeprecatedProvider(stat.providerId, stat.providerName)
+                }
+                ?.sumOf { stat -> stat.dynamicWeight }
+                ?.takeIf { sum -> sum > 0.0 }
+                ?.let { total ->
+                    dominantModel?.dynamicWeight?.div(total)
+                }
+
             city.polymarket.opportunities.mapNotNull { opportunity ->
                 if (!passesRookieStrategy(opportunity, strategyMode)) return@mapNotNull null
+                val zoneId = ZoneId.of(city.city.zoneId)
+                val cityToday = LocalDate.now(zoneId)
+                val targetDate = opportunity.condition.targetDate ?: cityToday
+                val horizon = city.horizons.firstOrNull { it.targetDate == targetDate } ?: return@mapNotNull null
+                if (!horizon.polyTempPremiumReady) return@mapNotNull null
+                if (targetDate == cityToday && horizon.polyTempPremiumInvalid) return@mapNotNull null
+                if (dominantModel == null || dominantShare == null) return@mapNotNull null
+                val mma = if (city.city.displayUnit == TempUnit.C) {
+                    horizon.polyTempPremiumC
+                } else {
+                    horizon.polyTempPremiumF
+                } ?: return@mapNotNull null
+                val mm = if (city.city.displayUnit == TempUnit.C) {
+                    horizon.polyTempC
+                } else {
+                    horizon.polyTempF
+                }
+                val selectedPrice = if (opportunity.recommendedBuy == "YES") {
+                    opportunity.yesPrice
+                } else {
+                    opportunity.noPrice
+                }
+                val profitIfWinPer100 = estimateProfitIfWinPer100(selectedPrice)
+                val expectedProfitPer100 = opportunity.executableEdge * ROOKIE_STAKE_REFERENCE
                 RookieOpportunityCandidate(
                     cityId = city.city.id,
                     cityName = city.city.name,
-                    dayLabel = rookieDayLabel(city, opportunity.condition.targetDate),
+                    dayLabel = rookieDayLabel(city, targetDate),
                     marketUrl = buildPolymarketEventUrl(city, opportunity.condition.targetDate),
-                    actionLabel = rookieActionLabel(opportunity),
-                    clarityLabel = rookieClarityLabel(opportunity),
+                    actionTitle = rookieActionTitle(opportunity),
+                    mmaSummary = rookieMmaSummary(
+                        mma = mma,
+                        mm = mm,
+                        unit = city.city.displayUnit
+                    ),
+                    dominantModelSummary = rookieDominantModelSummary(
+                        modelName = dominantModel.providerName,
+                        dominantShare = dominantShare
+                    ),
+                    whyItIsInteresting = rookieReasonSummary(opportunity),
+                    profitSummary = rookieProfitSummary(
+                        expectedProfitPer100 = expectedProfitPer100,
+                        profitIfWinPer100 = profitIfWinPer100
+                    ),
                     opportunity = opportunity
                 )
             }
         }
         .toList()
         .sortedByDescending { it.opportunity.executableEdge }
-        .take(30)
+        .take(24)
 }
 
 private fun passesRookieStrategy(
@@ -476,46 +570,83 @@ private fun passesRookieStrategy(
         StrategyMode.CONSERVADORA -> {
             opportunity.shouldTrade &&
                 opportunity.signal == TraderSignalLevel.GREEN &&
-                opportunity.executableEdge >= 0.06 &&
-                opportunity.fillProbability >= 0.70 &&
+                opportunity.executableEdge >= 0.07 &&
+                opportunity.fillProbability >= 0.72 &&
                 liquidity >= 1_200.0 &&
                 spread <= 0.08 &&
-                opportunity.totalCost <= 0.18
+                opportunity.totalCost <= 0.17
         }
 
         StrategyMode.AGRESIVA -> {
             opportunity.shouldTrade &&
                 opportunity.signal != TraderSignalLevel.RED &&
-                opportunity.executableEdge >= 0.02 &&
-                opportunity.fillProbability >= 0.45 &&
-                liquidity >= 250.0
+                opportunity.executableEdge >= 0.03 &&
+                opportunity.fillProbability >= 0.55 &&
+                liquidity >= 300.0 &&
+                opportunity.totalCost <= 0.21
         }
     }
 }
 
-private fun rookieActionLabel(opportunity: TraderOpportunity): String {
-    if (!opportunity.shouldTrade) return "Esta ni de coña"
+private fun rookieActionTitle(opportunity: TraderOpportunity): String {
+    if (!opportunity.shouldTrade) return "Mejor no entrar"
     return when {
-        opportunity.signal == TraderSignalLevel.GREEN && opportunity.executableEdge >= 0.12 -> "¡Apuesta ahora!"
-        opportunity.signal == TraderSignalLevel.GREEN -> "¿A qué esperas?"
-        opportunity.signal == TraderSignalLevel.YELLOW -> "Interesante, pero con calma"
-        else -> "Esta ni de coña"
+        opportunity.signal == TraderSignalLevel.GREEN && opportunity.executableEdge >= 0.12 -> "Oportunidad muy clara"
+        opportunity.signal == TraderSignalLevel.GREEN -> "Buena oportunidad"
+        opportunity.signal == TraderSignalLevel.YELLOW -> "Entrada posible con cuidado"
+        else -> "Mejor no entrar"
     }
 }
 
-private fun rookieClarityLabel(opportunity: TraderOpportunity): String {
-    return when {
-        opportunity.signal == TraderSignalLevel.GREEN && opportunity.fillProbability >= 0.75 ->
-            "Lectura clara y buena ejecución esperada."
+private fun rookieMmaSummary(
+    mma: Double,
+    mm: Double?,
+    unit: TempUnit
+): String {
+    val mmaLabel = formatTemperature(mma, unit, digits = 1)
+    val mmLabel = formatTemperature(mm, unit, digits = 1)
+    return "MMA ${mmaLabel} (ajustada con histórico). MM ${mmLabel}."
+}
 
-        opportunity.signal == TraderSignalLevel.GREEN ->
-            "Buena opción para entrar según el modelo."
+private fun rookieDominantModelSummary(
+    modelName: String,
+    dominantShare: Double
+): String {
+    return "Modelo histórico más fiable: $modelName (${formatPercent(dominantShare)} del peso total)."
+}
 
-        opportunity.signal == TraderSignalLevel.YELLOW ->
-            "Puede funcionar, pero la entrada es más delicada."
+private fun rookieReasonSummary(opportunity: TraderOpportunity): String {
+    val fillText = formatPercent(opportunity.fillProbability)
+    val costText = formatPercent(opportunity.totalCost)
+    val edgeText = formatPercent(opportunity.executableEdge)
+    val liquidityText = (opportunity.liquidity ?: 0.0).roundToInt()
+    val spreadText = formatPercent(opportunity.spread ?: 0.0)
+    return "Por qué interesa: ventaja real ${edgeText}, ejecución probable ${fillText}, liquidez ${liquidityText} y coste ${costText} (spread ${spreadText})."
+}
 
-        else -> "No cumple calidad mínima para novatos."
+private fun rookieProfitSummary(
+    expectedProfitPer100: Double,
+    profitIfWinPer100: Double?
+): String {
+    val expected = formatUsd(expectedProfitPer100)
+    val winIfRight = if (profitIfWinPer100 == null) {
+        "--"
+    } else {
+        formatUsd(profitIfWinPer100)
     }
+    return "Con 100 USDC: beneficio esperado $expected. Si aciertas, beneficio bruto aprox. $winIfRight."
+}
+
+private fun estimateProfitIfWinPer100(price: Double): Double? {
+    if (price <= 0.0 || price >= 1.0) return null
+    val shares = ROOKIE_STAKE_REFERENCE / price
+    val grossPayout = shares
+    val grossProfit = grossPayout - ROOKIE_STAKE_REFERENCE
+    return max(grossProfit, 0.0)
+}
+
+private fun formatUsd(value: Double): String {
+    return "$" + String.format(Locale.US, "%.2f", value)
 }
 
 private fun rookieDayLabel(
@@ -889,3 +1020,4 @@ private fun isFlashOpportunity(opportunity: TraderOpportunity): Boolean {
 private const val FLASH_DURATION_MILLIS = 60_000L
 private const val FLASH_MIN_EXECUTABLE_EDGE = 0.20
 private const val FLASH_MIN_LIQUIDITY = 1_200.0
+private const val ROOKIE_STAKE_REFERENCE = 100.0
