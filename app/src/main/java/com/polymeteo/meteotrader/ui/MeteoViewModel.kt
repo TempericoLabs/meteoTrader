@@ -7,6 +7,7 @@ import com.polymeteo.meteotrader.data.CityCatalog
 import com.polymeteo.meteotrader.data.WeatherRepository
 import com.polymeteo.meteotrader.data.model.BacktestReport
 import com.polymeteo.meteotrader.data.model.CityWeatherData
+import com.polymeteo.meteotrader.data.model.PolymarketAccountSnapshot
 import com.polymeteo.meteotrader.data.model.PolyTempPremiumReport
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -47,6 +48,10 @@ data class MeteoUiState(
     val premiumReportsByCity: Map<String, PolyTempPremiumReport> = emptyMap(),
     val premiumRefreshingCityIds: Set<String> = emptySet(),
     val premiumErrorsByCity: Map<String, String> = emptyMap(),
+    val polymarketWalletAddress: String = "",
+    val polymarketAccountSnapshot: PolymarketAccountSnapshot? = null,
+    val isPolymarketAccountRefreshing: Boolean = false,
+    val polymarketAccountErrorMessage: String? = null,
     val appMode: AppMode = AppMode.EXPERT,
     val strategyMode: StrategyMode = StrategyMode.CONSERVADORA
 )
@@ -60,12 +65,14 @@ class MeteoViewModel(
     private val _uiState = MutableStateFlow(
         MeteoUiState(
             appMode = initialPreferences.appMode,
-            strategyMode = initialPreferences.strategyMode
+            strategyMode = initialPreferences.strategyMode,
+            polymarketWalletAddress = repository.defaultPolymarketWalletAddress
         )
     )
     val uiState: StateFlow<MeteoUiState> = _uiState.asStateFlow()
     private var refreshJob: Job? = null
     private var backtestJob: Job? = null
+    private var accountJob: Job? = null
     private var premiumWarmupJob: Job? = null
     private val cityRefreshJobs = mutableMapOf<String, Job>()
     private val premiumJobs = mutableMapOf<String, Job>()
@@ -183,6 +190,43 @@ class MeteoViewModel(
             return
         }
         launchBacktestRefresh(cities)
+    }
+
+    fun refreshPolymarketAccount(force: Boolean = true) {
+        if (accountJob?.isActive == true) return
+        val currentSnapshot = _uiState.value.polymarketAccountSnapshot
+        if (!force && currentSnapshot != null) return
+
+        accountJob = viewModelScope.launch {
+            _uiState.update { current ->
+                current.copy(
+                    isPolymarketAccountRefreshing = true,
+                    polymarketAccountErrorMessage = null
+                )
+            }
+
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    repository.fetchPolymarketAccount()
+                }
+            }.onSuccess { snapshot ->
+                _uiState.update { current ->
+                    current.copy(
+                        polymarketAccountSnapshot = snapshot,
+                        isPolymarketAccountRefreshing = false,
+                        polymarketAccountErrorMessage = null
+                    )
+                }
+            }.onFailure { throwable ->
+                if (throwable is CancellationException) return@onFailure
+                _uiState.update { current ->
+                    current.copy(
+                        isPolymarketAccountRefreshing = false,
+                        polymarketAccountErrorMessage = throwable.message ?: "No se pudo cargar la cuenta Polymarket"
+                    )
+                }
+            }
+        }
     }
 
     private fun loadBacktestReport() {

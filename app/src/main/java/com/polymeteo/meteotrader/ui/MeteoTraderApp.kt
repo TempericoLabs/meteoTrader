@@ -1,6 +1,7 @@
 package com.polymeteo.meteotrader.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -13,6 +14,7 @@ import com.polymeteo.meteotrader.ui.screens.BacktestScreen
 import com.polymeteo.meteotrader.ui.screens.CitiesScreen
 import com.polymeteo.meteotrader.ui.screens.CityDetailScreen
 import com.polymeteo.meteotrader.ui.screens.PolyTempPremiumScreen
+import com.polymeteo.meteotrader.ui.screens.PolymarketAccountScreen
 import com.polymeteo.meteotrader.ui.screens.SettingsScreen
 
 private object Routes {
@@ -23,6 +25,7 @@ private object Routes {
     const val DetailBase = "detail"
     const val Premium = "premium/{cityId}"
     const val PremiumBase = "premium"
+    const val Account = "account"
 }
 
 @Composable
@@ -43,6 +46,12 @@ fun MeteoTraderApp(
                 onRefresh = { viewModel.refresh() },
                 onBacktestSelected = { navController.navigate(Routes.Backtest) },
                 onSettingsSelected = { navController.navigate(Routes.Settings) },
+                onPolymarketAccountSelected = {
+                    viewModel.refreshPolymarketAccount(force = false)
+                    navController.navigate(Routes.Account) {
+                        launchSingleTop = true
+                    }
+                },
                 onCitySelected = { cityId ->
                     navController.navigate("${Routes.DetailBase}/$cityId")
                 }
@@ -96,6 +105,22 @@ fun MeteoTraderApp(
                 errorMessage = uiState.premiumErrorsByCity[cityId],
                 onBack = { navController.popBackStack() },
                 onRefresh = { viewModel.refreshPremium(cityId) }
+            )
+        }
+
+        composable(Routes.Account) {
+            LaunchedEffect(uiState.polymarketWalletAddress) {
+                if (uiState.polymarketAccountSnapshot == null && !uiState.isPolymarketAccountRefreshing) {
+                    viewModel.refreshPolymarketAccount(force = true)
+                }
+            }
+            PolymarketAccountScreen(
+                walletAddress = uiState.polymarketWalletAddress,
+                snapshot = uiState.polymarketAccountSnapshot,
+                isRefreshing = uiState.isPolymarketAccountRefreshing,
+                errorMessage = uiState.polymarketAccountErrorMessage,
+                onBack = { navController.popBackStack() },
+                onRefresh = { viewModel.refreshPolymarketAccount(force = true) }
             )
         }
     }

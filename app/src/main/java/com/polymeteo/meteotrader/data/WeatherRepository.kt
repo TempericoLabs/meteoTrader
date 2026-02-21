@@ -18,6 +18,7 @@ import com.polymeteo.meteotrader.data.model.ControlStationSnapshot
 import com.polymeteo.meteotrader.data.model.ForecastHorizonData
 import com.polymeteo.meteotrader.data.model.ForecastSourceResult
 import com.polymeteo.meteotrader.data.model.MetarSnapshot
+import com.polymeteo.meteotrader.data.model.PolymarketAccountSnapshot
 import com.polymeteo.meteotrader.data.model.PolyTempPremiumReport
 import com.polymeteo.meteotrader.data.model.PolymarketSnapshot
 import com.polymeteo.meteotrader.data.model.PremiumComputationSource
@@ -30,6 +31,7 @@ import com.polymeteo.meteotrader.data.premium.PremiumWeightSnapshot
 import com.polymeteo.meteotrader.data.source.HttpClient
 import com.polymeteo.meteotrader.data.source.LiveMarketViabilityFilter
 import com.polymeteo.meteotrader.data.source.MetarSource
+import com.polymeteo.meteotrader.data.source.PolymarketAccountSource
 import com.polymeteo.meteotrader.data.source.PolymarketSource
 import com.polymeteo.meteotrader.data.source.PolymarketSource.ModelInput
 import com.polymeteo.meteotrader.data.source.TafSource
@@ -57,8 +59,10 @@ class WeatherRepository(
     private val wundergroundSource: WundergroundSource,
     private val forecastProviders: List<ForecastProvider>,
     private val polymarketSource: PolymarketSource,
+    private val polymarketAccountSource: PolymarketAccountSource,
     private val backtestEngine: BacktestEngine? = null,
-    private val premiumEngine: PolyTempPremiumEngine? = null
+    private val premiumEngine: PolyTempPremiumEngine? = null,
+    val defaultPolymarketWalletAddress: String = ""
 ) {
 
     suspend fun fetchAllCities(): List<CityWeatherData> = coroutineScope {
@@ -85,6 +89,16 @@ class WeatherRepository(
     suspend fun loadBacktestReport(): BacktestReport {
         val engine = backtestEngine ?: return BacktestReport.empty()
         return engine.computeReport()
+    }
+
+    suspend fun fetchPolymarketAccount(
+        walletAddress: String = defaultPolymarketWalletAddress
+    ): PolymarketAccountSnapshot {
+        val normalized = walletAddress.trim()
+        if (normalized.isBlank()) {
+            throw IllegalStateException("Define POLYMARKET_WALLET_ADDRESS en local.properties")
+        }
+        return polymarketAccountSource.fetchAccount(normalized)
     }
 
     suspend fun refreshPremiumReport(cityId: String): PolyTempPremiumReport? {
@@ -514,6 +528,7 @@ class WeatherRepository(
             val tafSource = TafSource(httpClient)
             val wundergroundSource = WundergroundSource(httpClient)
             val polymarketSource = PolymarketSource(httpClient)
+            val polymarketAccountSource = PolymarketAccountSource(httpClient)
             val openMeteoHistoricalSource = OpenMeteoHistoricalSource(httpClient)
             val noaaObservedSource = NoaaObservedSource(
                 httpClient = httpClient,
@@ -588,8 +603,10 @@ class WeatherRepository(
                 wundergroundSource = wundergroundSource,
                 forecastProviders = providers,
                 polymarketSource = polymarketSource,
+                polymarketAccountSource = polymarketAccountSource,
                 backtestEngine = backtestEngine,
-                premiumEngine = premiumEngine
+                premiumEngine = premiumEngine,
+                defaultPolymarketWalletAddress = BuildConfig.POLYMARKET_WALLET_ADDRESS
             )
         }
     }

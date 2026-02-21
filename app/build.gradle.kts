@@ -37,6 +37,7 @@ android {
         buildConfigField("String", "OPEN_WEATHER_API_KEY", "\"${localProperty("OPEN_WEATHER_API_KEY")}\"")
         buildConfigField("String", "NOAA_TOKEN", "\"${localProperty("NOAA_TOKEN")}\"")
         buildConfigField("String", "METSERVICE_API_KEY", "\"${localProperty("METSERVICE_API_KEY")}\"")
+        buildConfigField("String", "POLYMARKET_WALLET_ADDRESS", "\"${localProperty("POLYMARKET_WALLET_ADDRESS")}\"")
         buildConfigField("boolean", "DEMO_MODE", if (localProperty("DEMO_MODE").toBoolean()) "true" else "false")
     }
 

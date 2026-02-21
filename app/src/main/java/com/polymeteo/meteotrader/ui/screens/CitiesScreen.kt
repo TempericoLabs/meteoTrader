@@ -1,5 +1,6 @@
 package com.polymeteo.meteotrader.ui.screens
 
+import android.os.SystemClock
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -97,6 +98,7 @@ fun CitiesScreen(
     onRefresh: () -> Unit,
     onBacktestSelected: () -> Unit,
     onSettingsSelected: () -> Unit,
+    onPolymarketAccountSelected: () -> Unit,
     onCitySelected: (String) -> Unit
 ) {
     var flashToken by rememberSaveable { mutableStateOf("") }
@@ -148,6 +150,7 @@ fun CitiesScreen(
             onRefresh = onRefresh,
             onBacktestSelected = onBacktestSelected,
             onSettingsSelected = onSettingsSelected,
+            onPolymarketAccountSelected = onPolymarketAccountSelected,
             appMode = state.appMode,
             isBacktestRefreshing = state.isBacktestRefreshing
         )
@@ -210,9 +213,27 @@ private fun HeaderBar(
     onRefresh: () -> Unit,
     onBacktestSelected: () -> Unit,
     onSettingsSelected: () -> Unit,
+    onPolymarketAccountSelected: () -> Unit,
     appMode: AppMode,
     isBacktestRefreshing: Boolean
 ) {
+    var titleTapCount by remember { mutableStateOf(0) }
+    var lastTitleTapElapsedMs by remember { mutableStateOf(0L) }
+
+    fun registerTitleTap() {
+        val now = SystemClock.elapsedRealtime()
+        titleTapCount = if (now - lastTitleTapElapsedMs <= TITLE_MULTI_TAP_WINDOW_MS) {
+            titleTapCount + 1
+        } else {
+            1
+        }
+        lastTitleTapElapsedMs = now
+        if (titleTapCount >= TITLE_SECRET_TAP_COUNT) {
+            titleTapCount = 0
+            onPolymarketAccountSelected()
+        }
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -226,7 +247,8 @@ private fun HeaderBar(
             Text(
                 text = "PolyMeteo",
                 style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onBackground
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.clickable(onClick = ::registerTitleTap)
             )
             Text(
                 text = "Actualizado: $updatedText",
@@ -1021,3 +1043,5 @@ private const val FLASH_DURATION_MILLIS = 60_000L
 private const val FLASH_MIN_EXECUTABLE_EDGE = 0.20
 private const val FLASH_MIN_LIQUIDITY = 1_200.0
 private const val ROOKIE_STAKE_REFERENCE = 100.0
+private const val TITLE_SECRET_TAP_COUNT = 3
+private const val TITLE_MULTI_TAP_WINDOW_MS = 1_200L
