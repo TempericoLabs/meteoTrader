@@ -9,10 +9,13 @@ import com.polymeteo.meteotrader.data.model.BacktestReport
 import com.polymeteo.meteotrader.data.model.CityWeatherData
 import com.polymeteo.meteotrader.data.model.PaperPortfolioSnapshot
 import com.polymeteo.meteotrader.data.model.PolymarketAccountSnapshot
+import com.polymeteo.meteotrader.data.model.PolymarketUserActivityItem
+import com.polymeteo.meteotrader.data.model.PolymarketUserIntelSnapshot
 import com.polymeteo.meteotrader.data.model.PolyTempPremiumReport
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,6 +28,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.time.Instant
+import java.util.Locale
 
 enum class AppMode {
     EXPERT,
@@ -35,6 +39,35 @@ enum class StrategyMode {
     CONSERVADORA,
     AGRESIVA
 }
+
+data class CopyTradeRuntimeAlert(
+    val id: String,
+    val username: String,
+    val proxyWallet: String,
+    val type: String,
+    val side: String?,
+    val outcome: String?,
+    val title: String,
+    val eventSlug: String?,
+    val marketSlug: String?,
+    val usdcSize: Double?,
+    val price: Double?,
+    val timestamp: Instant?,
+    val cityId: String?,
+    val cityName: String?,
+    val summary: String
+)
+
+data class CopyTradeMonitorUiState(
+    val config: CopyTradePreferences = CopyTradePreferences(),
+    val isRunning: Boolean = false,
+    val baselinePrimed: Boolean = false,
+    val lastPollAt: Instant? = null,
+    val lastSeenActivityAt: Instant? = null,
+    val lastAlertAt: Instant? = null,
+    val lastError: String? = null,
+    val recentAlerts: List<CopyTradeRuntimeAlert> = emptyList()
+)
 
 data class MeteoUiState(
     val isLoading: Boolean = true,
@@ -56,6 +89,10 @@ data class MeteoUiState(
     val polymarketAccountSnapshot: PolymarketAccountSnapshot? = null,
     val isPolymarketAccountRefreshing: Boolean = false,
     val polymarketAccountErrorMessage: String? = null,
+    val polymarketUserIntelSnapshot: PolymarketUserIntelSnapshot? = null,
+    val isPolymarketUserIntelRefreshing: Boolean = false,
+    val polymarketUserIntelErrorMessage: String? = null,
+    val copyTradeMonitor: CopyTradeMonitorUiState = CopyTradeMonitorUiState(),
     val appMode: AppMode = AppMode.EXPERT,
     val strategyMode: StrategyMode = StrategyMode.CONSERVADORA
 )
@@ -70,21 +107,30 @@ class MeteoViewModel(
         MeteoUiState(
             appMode = initialPreferences.appMode,
             strategyMode = initialPreferences.strategyMode,
-            polymarketWalletAddress = repository.defaultPolymarketWalletAddress
+            polymarketWalletAddress = repository.defaultPolymarketWalletAddress,
+            copyTradeMonitor = CopyTradeMonitorUiState(
+                config = initialPreferences.copyTrade
+            )
         )
     )
     val uiState: StateFlow<MeteoUiState> = _uiState.asStateFlow()
     private var refreshJob: Job? = null
     private var backtestJob: Job? = null
     private var accountJob: Job? = null
+    private var userIntelJob: Job? = null
+    private var copyTradeMonitorJob: Job? = null
     private var paperTradingJob: Job? = null
     private var premiumWarmupJob: Job? = null
     private val cityRefreshJobs = mutableMapOf<String, Job>()
     private val premiumJobs = mutableMapOf<String, Job>()
+    private val seenCopyTradeActivityKeys = LinkedHashSet<String>()
 
     init {
         loadBacktestReport()
         refresh(initialLoad = true)
+        if (initialPreferences.copyTrade.enabled && initialPreferences.copyTrade.proxyWallet.isNotBlank()) {
+            startCopyTradeMonitor(rebaseline = true)
+        }
     }
 
     fun refresh(initialLoad: Boolean = false) {
@@ -333,6 +379,135 @@ class MeteoViewModel(
         }
     }
 
+    fun analyzePolymarketUser(username: String) {
+        if (userIntelJob?.isActive == true) return
+        val normalized = username.trim().removePrefix("@")
+        if (normalized.isBlank()) {
+            _uiState.update { current ->
+                current.copy(
+                    polymarketUserIntelErrorMessage = "Introduce un nombre de usuario de Polymarket"
+                )
+            }
+            return
+        }
+
+        userIntelJob = viewModelScope.launch {
+            _uiState.update { current ->
+                current.copy(
+                    isPolymarketUserIntelRefreshing = true,
+                    polymarketUserIntelErrorMessage = null
+                )
+            }
+
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    repository.fetchPolymarketUserIntel(normalized)
+                }
+            }.onSuccess { snapshot ->
+                _uiState.update { current ->
+                    val currentConfig = current.copyTradeMonitor.config
+                    val nextConfig = if (
+                        !currentConfig.enabled &&
+                        currentConfig.username.isBlank() &&
+                        currentConfig.proxyWallet.isBlank()
+                    ) {
+                        currentConfig.copy(
+                            username = snapshot.profile.username,
+                            proxyWallet = snapshot.profile.proxyWallet
+                        )
+                    } else {
+                        currentConfig
+                    }
+                    current.copy(
+                        polymarketUserIntelSnapshot = snapshot,
+                        isPolymarketUserIntelRefreshing = false,
+                        polymarketUserIntelErrorMessage = null,
+                        copyTradeMonitor = current.copyTradeMonitor.copy(
+                            config = nextConfig
+                        )
+                    )
+                }
+            }.onFailure { throwable ->
+                if (throwable is CancellationException) return@onFailure
+                _uiState.update { current ->
+                    current.copy(
+                        isPolymarketUserIntelRefreshing = false,
+                        polymarketUserIntelErrorMessage = throwable.message
+                            ?: "No se pudo analizar el usuario de Polymarket"
+                    )
+                }
+            }
+        }
+    }
+
+    fun updateCopyTradeConfig(
+        transform: (CopyTradePreferences) -> CopyTradePreferences
+    ) {
+        _uiState.update { current ->
+            val nextConfig = transform(current.copyTradeMonitor.config)
+            preferencesStore.saveCopyTrade(nextConfig)
+            current.copy(
+                copyTradeMonitor = current.copyTradeMonitor.copy(
+                    config = nextConfig
+                )
+            )
+        }
+    }
+
+    fun toggleCopyTradeFromCurrentIntel(enabled: Boolean) {
+        if (!enabled) {
+            val nextConfig = _uiState.value.copyTradeMonitor.config.copy(enabled = false)
+            preferencesStore.saveCopyTrade(nextConfig)
+            _uiState.update { current ->
+                current.copy(
+                    copyTradeMonitor = current.copyTradeMonitor.copy(
+                        config = nextConfig,
+                        isRunning = false,
+                        lastError = null
+                    )
+                )
+            }
+            stopCopyTradeMonitor()
+            return
+        }
+
+        val intel = _uiState.value.polymarketUserIntelSnapshot
+        if (intel == null) {
+            _uiState.update { current ->
+                current.copy(
+                    polymarketUserIntelErrorMessage = "Analiza primero un usuario para activar CopyTrade"
+                )
+            }
+            return
+        }
+
+        val nextConfig = _uiState.value.copyTradeMonitor.config.copy(
+            enabled = true,
+            username = intel.profile.username,
+            proxyWallet = intel.profile.proxyWallet
+        )
+        preferencesStore.saveCopyTrade(nextConfig)
+        _uiState.update { current ->
+            current.copy(
+                copyTradeMonitor = current.copyTradeMonitor.copy(
+                    config = nextConfig,
+                    lastError = null
+                )
+            )
+        }
+        startCopyTradeMonitor(rebaseline = true)
+    }
+
+    fun clearCopyTradeAlerts() {
+        _uiState.update { current ->
+            current.copy(
+                copyTradeMonitor = current.copyTradeMonitor.copy(
+                    recentAlerts = emptyList()
+                )
+            )
+        }
+    }
+
     private fun loadBacktestReport() {
         if (backtestJob?.isActive == true) return
         backtestJob = viewModelScope.launch {
@@ -539,6 +714,239 @@ class MeteoViewModel(
         preferencesStore.saveStrategyMode(mode)
     }
 
+    private fun startCopyTradeMonitor(rebaseline: Boolean) {
+        val config = _uiState.value.copyTradeMonitor.config
+        if (!config.enabled || config.proxyWallet.isBlank()) return
+        if (copyTradeMonitorJob?.isActive == true) {
+            if (rebaseline) {
+                stopCopyTradeMonitor()
+            } else {
+                return
+            }
+        }
+        if (rebaseline) {
+            synchronized(seenCopyTradeActivityKeys) {
+                seenCopyTradeActivityKeys.clear()
+            }
+        }
+
+        copyTradeMonitorJob = viewModelScope.launch {
+            _uiState.update { current ->
+                current.copy(
+                    copyTradeMonitor = current.copyTradeMonitor.copy(
+                        isRunning = true,
+                        baselinePrimed = !rebaseline && current.copyTradeMonitor.baselinePrimed,
+                        lastError = null
+                    )
+                )
+            }
+
+            while (isActive) {
+                val currentConfig = _uiState.value.copyTradeMonitor.config
+                if (!currentConfig.enabled || currentConfig.proxyWallet.isBlank()) break
+
+                runCatching {
+                    repository.fetchPolymarketUserActivityByWallet(
+                        walletAddress = currentConfig.proxyWallet,
+                        limit = COPYTRADE_POLL_FETCH_LIMIT
+                    )
+                }.onSuccess { activity ->
+                    handleCopyTradePollSuccess(activity, currentConfig)
+                }.onFailure { throwable ->
+                    if (throwable !is CancellationException) {
+                        _uiState.update { current ->
+                            current.copy(
+                                copyTradeMonitor = current.copyTradeMonitor.copy(
+                                    lastPollAt = Instant.now(),
+                                    lastError = throwable.message ?: "Error en CopyTrade poll"
+                                )
+                            )
+                        }
+                    }
+                }
+
+                delay((_uiState.value.copyTradeMonitor.config.pollIntervalSec.coerceIn(2, 15) * 1000L))
+            }
+
+            _uiState.update { current ->
+                current.copy(
+                    copyTradeMonitor = current.copyTradeMonitor.copy(
+                        isRunning = false
+                    )
+                )
+            }
+        }
+    }
+
+    private fun stopCopyTradeMonitor() {
+        copyTradeMonitorJob?.cancel()
+        copyTradeMonitorJob = null
+    }
+
+    private fun handleCopyTradePollSuccess(
+        activity: List<PolymarketUserActivityItem>,
+        config: CopyTradePreferences
+    ) {
+        val sorted = activity.sortedBy { it.timestamp ?: Instant.EPOCH }
+        val now = Instant.now()
+        val maxTimestamp = sorted.maxOfOrNull { it.timestamp ?: Instant.EPOCH }?.takeIf { it != Instant.EPOCH }
+
+        val baselinePrimed = _uiState.value.copyTradeMonitor.baselinePrimed
+        val newItems = mutableListOf<PolymarketUserActivityItem>()
+
+        synchronized(seenCopyTradeActivityKeys) {
+            if (!baselinePrimed && seenCopyTradeActivityKeys.isEmpty()) {
+                sorted.forEach { item ->
+                    seenCopyTradeActivityKeys += copyTradeActivityKey(item)
+                }
+            } else {
+                sorted.forEach { item ->
+                    val key = copyTradeActivityKey(item)
+                    if (seenCopyTradeActivityKeys.add(key)) {
+                        newItems += item
+                    }
+                }
+            }
+            while (seenCopyTradeActivityKeys.size > COPYTRADE_SEEN_KEYS_LIMIT) {
+                val first = seenCopyTradeActivityKeys.firstOrNull() ?: break
+                seenCopyTradeActivityKeys.remove(first)
+            }
+        }
+
+        val alerts = if (!baselinePrimed && _uiState.value.copyTradeMonitor.recentAlerts.isEmpty()) {
+            emptyList()
+        } else {
+            newItems.mapNotNull { item -> buildCopyTradeAlert(item, config) }
+        }
+
+        _uiState.update { current ->
+            val existingAlerts = current.copyTradeMonitor.recentAlerts
+            val nextAlerts = (alerts + existingAlerts)
+                .distinctBy { it.id }
+                .sortedByDescending { it.timestamp ?: Instant.EPOCH }
+                .take(COPYTRADE_ALERT_HISTORY_LIMIT)
+
+            current.copy(
+                copyTradeMonitor = current.copyTradeMonitor.copy(
+                    isRunning = current.copyTradeMonitor.config.enabled,
+                    baselinePrimed = true,
+                    lastPollAt = now,
+                    lastSeenActivityAt = maxTimestamp ?: current.copyTradeMonitor.lastSeenActivityAt,
+                    lastAlertAt = alerts.maxOfOrNull { it.timestamp ?: Instant.EPOCH }?.takeIf { it != Instant.EPOCH }
+                        ?: current.copyTradeMonitor.lastAlertAt,
+                    lastError = null,
+                    recentAlerts = nextAlerts
+                )
+            )
+        }
+    }
+
+    private fun copyTradeActivityKey(item: PolymarketUserActivityItem): String {
+        return listOf(
+            item.transactionHash,
+            item.type,
+            item.side,
+            item.outcome,
+            item.title,
+            item.timestamp?.epochSecond?.toString()
+        ).joinToString("|")
+    }
+
+    private fun buildCopyTradeAlert(
+        item: PolymarketUserActivityItem,
+        config: CopyTradePreferences
+    ): CopyTradeRuntimeAlert? {
+        val type = (item.type ?: "ACTIVITY").uppercase(Locale.US)
+        val side = item.side?.uppercase(Locale.US)
+        val outcome = item.outcome?.uppercase(Locale.US)
+        val usdc = item.usdcSize ?: ((item.size ?: 0.0) * (item.price ?: 0.0)).takeIf { it > 0.0 }
+        val titleLc = item.title.lowercase(Locale.US)
+        val eventLc = (item.eventSlug ?: "").lowercase(Locale.US)
+
+        val city = detectTrackedCityForCopyTrade(eventLc, titleLc)
+        if (config.weatherOnly) {
+            val isWeather = "highest-temperature" in eventLc || ("temperature" in titleLc && "highest" in titleLc)
+            if (!isWeather) return null
+        }
+        if (config.trackedCitiesOnly && city == null) return null
+
+        when (side) {
+            "BUY" -> {
+                if (!config.alertBuys) return null
+                if ((usdc ?: 0.0) < config.minBuyUsdc) return null
+            }
+            "SELL" -> {
+                if (!config.alertSells) return null
+                if ((usdc ?: 0.0) < config.minSellUsdc) return null
+            }
+            else -> if (!config.alertOtherActivity) return null
+        }
+
+        val username = config.username.ifBlank { "usuario" }
+        val sideText = side ?: type
+        val usdcText = usdc?.let { "$" + String.format(Locale.US, "%.2f", it) } ?: "--"
+        val priceText = item.price?.let { "${(it * 100.0).toInt()}c" } ?: "--"
+        val summary = buildString {
+            append(username)
+            append(" ")
+            append(sideText)
+            outcome?.let {
+                append(" ")
+                append(it)
+            }
+            append(" • ")
+            append(usdcText)
+            append(" @ ")
+            append(priceText)
+            city?.let {
+                append(" • ")
+                append(it.second)
+            }
+        }
+
+        return CopyTradeRuntimeAlert(
+            id = copyTradeActivityKey(item),
+            username = username,
+            proxyWallet = config.proxyWallet,
+            type = type,
+            side = side,
+            outcome = outcome,
+            title = item.title,
+            eventSlug = item.eventSlug,
+            marketSlug = item.marketSlug,
+            usdcSize = usdc,
+            price = item.price,
+            timestamp = item.timestamp,
+            cityId = city?.first,
+            cityName = city?.second,
+            summary = summary
+        )
+    }
+
+    private fun detectTrackedCityForCopyTrade(eventSlugLc: String, titleLc: String): Pair<String, String>? {
+        val cityId = when {
+            "nyc" in eventSlugLc || "new york" in titleLc -> "new-york"
+            "sao-paulo" in eventSlugLc || "sao paulo" in titleLc -> "sao-paulo"
+            "buenos-aires" in eventLcOrTitle(eventSlugLc, titleLc) -> "buenos-aires"
+            "london" in eventLcOrTitle(eventSlugLc, titleLc) -> "london"
+            "miami" in eventLcOrTitle(eventSlugLc, titleLc) -> "miami"
+            "toronto" in eventLcOrTitle(eventSlugLc, titleLc) -> "toronto"
+            "seattle" in eventLcOrTitle(eventSlugLc, titleLc) -> "seattle"
+            "dallas" in eventLcOrTitle(eventSlugLc, titleLc) -> "dallas"
+            "wellington" in eventLcOrTitle(eventSlugLc, titleLc) -> "wellington"
+            "ankara" in eventLcOrTitle(eventSlugLc, titleLc) -> "ankara"
+            "seoul" in eventLcOrTitle(eventSlugLc, titleLc) -> "seoul"
+            "chicago" in eventLcOrTitle(eventSlugLc, titleLc) -> "chicago"
+            "atlanta" in eventLcOrTitle(eventSlugLc, titleLc) -> "atlanta"
+            "paris" in eventLcOrTitle(eventSlugLc, titleLc) -> "paris"
+            else -> null
+        } ?: return null
+        val cityName = CityCatalog.findById(cityId)?.name ?: cityId
+        return cityId to cityName
+    }
+
+    private fun eventLcOrTitle(eventSlugLc: String, titleLc: String): String = "$eventSlugLc|$titleLc"
+
     private fun refreshPaperTrading(cities: List<CityWeatherData>) {
         paperTradingJob?.cancel()
         paperTradingJob = viewModelScope.launch {
@@ -572,9 +980,17 @@ class MeteoViewModel(
             }
         }
     }
+
+    override fun onCleared() {
+        stopCopyTradeMonitor()
+        super.onCleared()
+    }
 }
 
 private const val MAX_CITY_REFRESH_CONCURRENCY = 4
+private const val COPYTRADE_POLL_FETCH_LIMIT = 25
+private const val COPYTRADE_SEEN_KEYS_LIMIT = 400
+private const val COPYTRADE_ALERT_HISTORY_LIMIT = 40
 
 class MeteoViewModelFactory(
     private val repository: WeatherRepository,

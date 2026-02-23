@@ -1,9 +1,25 @@
 package com.polymeteo.meteotrader.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -15,7 +31,14 @@ import com.polymeteo.meteotrader.ui.screens.CitiesScreen
 import com.polymeteo.meteotrader.ui.screens.CityDetailScreen
 import com.polymeteo.meteotrader.ui.screens.PolyTempPremiumScreen
 import com.polymeteo.meteotrader.ui.screens.PolymarketAccountScreen
+import com.polymeteo.meteotrader.ui.screens.PolymarketUserIntelScreen
 import com.polymeteo.meteotrader.ui.screens.SettingsScreen
+import com.polymeteo.meteotrader.ui.theme.DarkPanel
+import com.polymeteo.meteotrader.ui.theme.MutedInk
+import com.polymeteo.meteotrader.ui.theme.Negative
+import com.polymeteo.meteotrader.ui.theme.Positive
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 
 private object Routes {
     const val Cities = "cities"
@@ -26,6 +49,7 @@ private object Routes {
     const val Premium = "premium/{cityId}"
     const val PremiumBase = "premium"
     const val Account = "account"
+    const val UserIntel = "user-intel"
 }
 
 @Composable
@@ -36,10 +60,11 @@ fun MeteoTraderApp(
     val viewModel: MeteoViewModel = viewModel(factory = viewModelFactory)
     val uiState by viewModel.uiState.collectAsState()
 
-    NavHost(
-        navController = navController,
-        startDestination = Routes.Cities
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        NavHost(
+            navController = navController,
+            startDestination = Routes.Cities
+        ) {
         composable(Routes.Cities) {
             CitiesScreen(
                 state = uiState,
@@ -138,8 +163,93 @@ fun MeteoTraderApp(
                 isRefreshing = uiState.isPolymarketAccountRefreshing,
                 errorMessage = uiState.polymarketAccountErrorMessage,
                 onBack = { navController.popBackStack() },
-                onRefresh = { viewModel.refreshPolymarketAccount(force = true) }
+                onRefresh = { viewModel.refreshPolymarketAccount(force = true) },
+                onOpenUserIntel = {
+                    navController.navigate(Routes.UserIntel) {
+                        launchSingleTop = true
+                    }
+                }
             )
         }
+
+            composable(Routes.UserIntel) {
+                PolymarketUserIntelScreen(
+                    appMode = uiState.appMode,
+                    snapshot = uiState.polymarketUserIntelSnapshot,
+                    copyTradeMonitor = uiState.copyTradeMonitor,
+                    isRefreshing = uiState.isPolymarketUserIntelRefreshing,
+                    errorMessage = uiState.polymarketUserIntelErrorMessage,
+                    onBack = { navController.popBackStack() },
+                    onSearch = { username ->
+                        viewModel.analyzePolymarketUser(username)
+                    },
+                    onCopyTradeConfigChange = { config ->
+                        viewModel.updateCopyTradeConfig { _ -> config }
+                    },
+                    onCopyTradeToggle = { enabled ->
+                        viewModel.toggleCopyTradeFromCurrentIntel(enabled)
+                    },
+                    onClearCopyTradeAlerts = {
+                        viewModel.clearCopyTradeAlerts()
+                    }
+                )
+            }
+        }
+
+        CopyTradeForegroundAlertOverlay(
+            latestAlert = uiState.copyTradeMonitor.recentAlerts.firstOrNull(),
+            isMonitorRunning = uiState.copyTradeMonitor.isRunning,
+            onOpenIntel = {
+                navController.navigate(Routes.UserIntel) {
+                    launchSingleTop = true
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun BoxScope.CopyTradeForegroundAlertOverlay(
+    latestAlert: CopyTradeRuntimeAlert?,
+    isMonitorRunning: Boolean,
+    onOpenIntel: () -> Unit
+) {
+    if (!isMonitorRunning || latestAlert == null) return
+    val ts = latestAlert.timestamp ?: return
+    if (ChronoUnit.SECONDS.between(ts, Instant.now()) > 90) return
+
+    val accent = when {
+        latestAlert.side.equals("BUY", ignoreCase = true) -> Positive
+        latestAlert.side.equals("SELL", ignoreCase = true) -> Negative
+        else -> Color(0xFFFFC857)
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 8.dp)
+            .align(Alignment.TopCenter)
+            .background(DarkPanel)
+            .border(1.dp, Color(0x335FC8FF))
+            .clickable { onOpenIntel() }
+            .padding(horizontal = 10.dp, vertical = 8.dp)
+    ) {
+        Text(
+            text = "COPYTRADE ALERTA • ${latestAlert.username}",
+            style = MaterialTheme.typography.labelLarge,
+            color = accent,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text = latestAlert.summary,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 2
+        )
+        Text(
+            text = "Pulsa para abrir Intel de usuario",
+            style = MaterialTheme.typography.labelSmall,
+            color = MutedInk
+        )
     }
 }

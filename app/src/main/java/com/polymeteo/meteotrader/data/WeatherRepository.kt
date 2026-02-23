@@ -20,6 +20,8 @@ import com.polymeteo.meteotrader.data.model.ForecastSourceResult
 import com.polymeteo.meteotrader.data.model.MetarSnapshot
 import com.polymeteo.meteotrader.data.model.PaperPortfolioSnapshot
 import com.polymeteo.meteotrader.data.model.PolymarketAccountSnapshot
+import com.polymeteo.meteotrader.data.model.PolymarketUserIntelSnapshot
+import com.polymeteo.meteotrader.data.model.PolymarketUserActivityItem
 import com.polymeteo.meteotrader.data.model.PolyTempPremiumReport
 import com.polymeteo.meteotrader.data.model.PolymarketSnapshot
 import com.polymeteo.meteotrader.data.model.PremiumComputationSource
@@ -36,6 +38,7 @@ import com.polymeteo.meteotrader.data.source.HttpClient
 import com.polymeteo.meteotrader.data.source.LiveMarketViabilityFilter
 import com.polymeteo.meteotrader.data.source.MetarSource
 import com.polymeteo.meteotrader.data.source.PolymarketAccountSource
+import com.polymeteo.meteotrader.data.source.PolymarketUserIntelSource
 import com.polymeteo.meteotrader.data.source.PolymarketSource
 import com.polymeteo.meteotrader.data.source.PolymarketSource.ModelInput
 import com.polymeteo.meteotrader.data.source.TafSource
@@ -64,6 +67,7 @@ class WeatherRepository(
     private val forecastProviders: List<ForecastProvider>,
     private val polymarketSource: PolymarketSource,
     private val polymarketAccountSource: PolymarketAccountSource,
+    private val polymarketUserIntelSource: PolymarketUserIntelSource,
     private val backtestEngine: BacktestEngine? = null,
     private val premiumEngine: PolyTempPremiumEngine? = null,
     private val paperTradingEngine: PaperTradingEngine? = null,
@@ -141,6 +145,18 @@ class WeatherRepository(
             throw IllegalStateException("Define POLYMARKET_WALLET_ADDRESS en local.properties")
         }
         return polymarketAccountSource.fetchAccount(normalized)
+    }
+
+    suspend fun fetchPolymarketUserIntel(username: String): PolymarketUserIntelSnapshot {
+        return polymarketUserIntelSource.fetchUserIntel(username)
+    }
+
+    suspend fun fetchPolymarketUserActivityByWallet(
+        walletAddress: String,
+        limit: Int = 20
+    ): List<PolymarketUserActivityItem> {
+        if (walletAddress.isBlank()) return emptyList()
+        return polymarketUserIntelSource.fetchPublicActivityByWallet(walletAddress, limit)
     }
 
     suspend fun refreshPremiumReport(cityId: String): PolyTempPremiumReport? {
@@ -571,6 +587,10 @@ class WeatherRepository(
             val wundergroundSource = WundergroundSource(httpClient)
             val polymarketSource = PolymarketSource(httpClient)
             val polymarketAccountSource = PolymarketAccountSource(httpClient)
+            val polymarketUserIntelSource = PolymarketUserIntelSource(
+                httpClient = httpClient,
+                accountSource = polymarketAccountSource
+            )
             val openMeteoHistoricalSource = OpenMeteoHistoricalSource(httpClient)
             val noaaObservedSource = NoaaObservedSource(
                 httpClient = httpClient,
@@ -651,6 +671,7 @@ class WeatherRepository(
                 forecastProviders = providers,
                 polymarketSource = polymarketSource,
                 polymarketAccountSource = polymarketAccountSource,
+                polymarketUserIntelSource = polymarketUserIntelSource,
                 backtestEngine = backtestEngine,
                 premiumEngine = premiumEngine,
                 paperTradingEngine = paperTradingEngine,

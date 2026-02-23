@@ -54,7 +54,8 @@ fun PolymarketAccountScreen(
     isRefreshing: Boolean,
     errorMessage: String?,
     onBack: () -> Unit,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    onOpenUserIntel: () -> Unit
 ) {
     val isRookie = appMode == AppMode.ROOKIE
     val uriHandler = LocalUriHandler.current
@@ -115,6 +116,34 @@ fun PolymarketAccountScreen(
                     fetchedAt = snapshot?.fetchedAt?.formatInZone("UTC", "dd-MM-yyyy HH:mm 'UTC'") ?: "--",
                     warningCount = snapshot?.warnings?.size ?: 0
                 )
+            }
+
+            item {
+                BaseCard(borderColor = Color(0x224FC3FF)) {
+                    Text(
+                        text = if (isRookie) "Intel de usuario (pantalla interna)" else "Análisis público de otros usuarios",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = if (isRookie) {
+                            "Busca un usuario de Polymarket y revisa su actividad pública, estilo y foco de mercados."
+                        } else {
+                            "Pantalla informativa para introducir @username y analizar actividad/trades/posiciones públicas vía APIs oficiales."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MutedInk,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                    Text(
+                        text = "Abrir Intel de usuario",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color(0xFF63C5FF),
+                        modifier = Modifier
+                            .padding(top = 8.dp)
+                            .clickable { onOpenUserIntel() }
+                    )
+                }
             }
 
             errorMessage?.takeIf { it.isNotBlank() }?.let { message ->
