@@ -10,7 +10,10 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -35,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
@@ -84,7 +88,13 @@ fun PolymarketUserIntelScreen(
         containerColor = DarkBase,
         topBar = {
             TopAppBar(
-                title = { Text("Intel usuario Polymarket") },
+                title = {
+                    Text(
+                        text = "Intel Polymarket",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -112,7 +122,7 @@ fun PolymarketUserIntelScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             item {
                 InfoCard(
@@ -149,14 +159,19 @@ fun PolymarketUserIntelScreen(
                         OutlinedTextField(
                             value = query,
                             onValueChange = { query = it },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 54.dp),
                             singleLine = true,
                             label = { Text("Usuario Polymarket") },
                             placeholder = { Text("ikik111 o @ikik111") }
                         )
                         Button(
                             onClick = { onSearch(query) },
-                            enabled = query.trim().isNotBlank()
+                            enabled = query.trim().isNotBlank(),
+                            modifier = Modifier
+                                .height(48.dp)
+                                .widthIn(min = 108.dp)
                         ) {
                             Text("Analizar")
                         }
@@ -290,70 +305,73 @@ private fun CopyTradeControlCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = if (isRookie) "CopyTrade (alertas rápidas)" else "CopyTrade (monitor público en tiempo real)",
+                text = "Realtime Copytrade",
                 style = MaterialTheme.typography.titleSmall,
-                color = if (monitor.isRunning) Positive else Color(0xFFFFC857)
+                color = if (monitor.isRunning) Positive else Color(0xFFFFC857),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = if (monitor.isRunning) "ACTIVO" else "OFF",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (monitor.isRunning) Positive else MutedInk,
-                    modifier = Modifier.padding(end = 8.dp)
-                )
-                Switch(
-                    checked = config.enabled,
-                    onCheckedChange = { enabled -> onToggle(enabled) }
-                )
-            }
+            Switch(
+                checked = config.enabled,
+                onCheckedChange = { enabled -> onToggle(enabled) },
+                modifier = Modifier.scale(0.86f)
+            )
         }
         Text(
+            text = if (monitor.isRunning) "ACTIVO" else "OFF",
+            style = MaterialTheme.typography.labelSmall,
+            color = if (monitor.isRunning) Positive else MutedInk
+        )
+        Text(
             text = if (isRookie) {
-                "Vigila compras/ventas del usuario y avisa cuando superan el importe mínimo."
+                "Alertas de compras/ventas del usuario con filtros por importe."
             } else {
-                "Polling rápido de activity pública por proxy wallet (latencia práctica: API + indexado + intervalo de sondeo)."
+                "Monitor de activity pública por proxy wallet (polling rápido)."
             },
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelSmall,
             color = MutedInk,
-            modifier = Modifier.padding(top = 4.dp)
+            modifier = Modifier.padding(top = 2.dp)
         )
         Text(
             text = "Objetivo monitorizado: $targetLabel" + if (!targetMatchesCurrent) " (perfil actual distinto)" else "",
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(top = 6.dp)
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 4.dp)
         )
         if (!targetMatchesCurrent) {
             Text(
                 text = "Al activar, el monitor se reengancha al usuario analizado en esta pantalla.",
                 style = MaterialTheme.typography.labelSmall,
                 color = Color(0xFFFFC857),
-                modifier = Modifier.padding(top = 2.dp)
+                modifier = Modifier.padding(top = 1.dp)
             )
         }
 
         CopyTradeSwitchRow(
-            label = "Alertar compras",
+            label = "Compras",
             checked = config.alertBuys,
             onChecked = { onConfigChange(config.copy(alertBuys = it)) }
         )
         CopyTradeSwitchRow(
-            label = "Alertar ventas",
+            label = "Ventas",
             checked = config.alertSells,
             onChecked = { onConfigChange(config.copy(alertSells = it)) }
         )
         CopyTradeSwitchRow(
-            label = "Solo mercados meteo",
+            label = "Solo meteo",
             checked = config.weatherOnly,
             onChecked = { onConfigChange(config.copy(weatherOnly = it)) }
         )
         CopyTradeSwitchRow(
-            label = "Solo ciudades PolyMeteo",
+            label = "Solo PolyMeteo",
             checked = config.trackedCitiesOnly,
             onChecked = { onConfigChange(config.copy(trackedCitiesOnly = it)) }
         )
         CopyTradeSwitchRow(
-            label = "Alertar otra actividad (no BUY/SELL)",
+            label = "Otros eventos",
             checked = config.alertOtherActivity,
             onChecked = { onConfigChange(config.copy(alertOtherActivity = it)) }
         )
@@ -386,14 +404,14 @@ private fun CopyTradeControlCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 6.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+                .padding(top = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = "Último poll: ${monitor.lastPollAt?.formatInZone("UTC", "HH:mm:ss 'UTC'") ?: "--"}",
                 style = MaterialTheme.typography.labelSmall,
-                color = MutedInk
+                color = MutedInk,
+                modifier = Modifier.weight(1f)
             )
             Text(
                 text = "Última alerta: ${monitor.lastAlertAt?.formatInZone("UTC", "HH:mm:ss") ?: "--"}",
@@ -406,7 +424,9 @@ private fun CopyTradeControlCard(
                 text = "Última actividad detectada: ${lastSeen.formatInZone("UTC", "dd-MM HH:mm:ss 'UTC'")}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MutedInk,
-                modifier = Modifier.padding(top = 2.dp)
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 1.dp)
             )
         }
         monitor.lastError?.takeIf { it.isNotBlank() }?.let { error ->
@@ -422,18 +442,18 @@ private fun CopyTradeControlCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp),
+                    .padding(top = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = "Alertas recientes (${monitor.recentAlerts.size})",
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelMedium,
                     color = Color(0xFF7CC2FF)
                 )
                 Text(
                     text = "Limpiar",
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelMedium,
                     color = Color(0xFF63C5FF),
                     modifier = Modifier.clickable { onClearAlerts() }
                 )
@@ -454,17 +474,21 @@ private fun CopyTradeSwitchRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 6.dp),
+            .padding(top = 2.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelSmall,
             color = MutedInk,
             modifier = Modifier.weight(1f)
         )
-        Switch(checked = checked, onCheckedChange = onChecked)
+        Switch(
+            checked = checked,
+            onCheckedChange = onChecked,
+            modifier = Modifier.scale(0.80f)
+        )
     }
 }
 
@@ -477,7 +501,7 @@ private fun CopyTradeSliderRow(
     steps: Int,
     onValueChange: (Float) -> Unit
 ) {
-    Column(modifier = Modifier.padding(top = 6.dp)) {
+    Column(modifier = Modifier.padding(top = 2.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -485,16 +509,20 @@ private fun CopyTradeSliderRow(
         ) {
             Text(
                 text = label,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.labelSmall,
                 color = MutedInk
             )
             Text(
                 text = valueText,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurface
             )
         }
         Slider(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(24.dp)
+                .scale(0.92f),
             value = value.coerceIn(range.start, range.endInclusive),
             onValueChange = onValueChange,
             valueRange = range,
@@ -513,9 +541,9 @@ private fun CopyTradeAlertRow(alert: CopyTradeRuntimeAlert) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 6.dp)
+            .padding(top = 4.dp)
             .border(1.dp, Color(0x22FFFFFF))
-            .padding(8.dp)
+            .padding(6.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -524,7 +552,7 @@ private fun CopyTradeAlertRow(alert: CopyTradeRuntimeAlert) {
         ) {
             Text(
                 text = listOfNotNull(alert.side, alert.outcome).joinToString(" • ").ifBlank { alert.type },
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelSmall,
                 color = sideColor
             )
             Text(
@@ -535,7 +563,7 @@ private fun CopyTradeAlertRow(alert: CopyTradeRuntimeAlert) {
         }
         Text(
             text = alert.summary,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(top = 3.dp)
         )
@@ -952,7 +980,7 @@ private fun BaseCard(
             .fillMaxWidth()
             .background(DarkPanel)
             .border(1.dp, borderColor)
-            .padding(10.dp),
+            .padding(horizontal = 8.dp, vertical = 7.dp),
         verticalArrangement = Arrangement.spacedBy(1.dp),
         content = content
     )
