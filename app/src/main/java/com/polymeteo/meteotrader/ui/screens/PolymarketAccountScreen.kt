@@ -35,6 +35,7 @@ import com.polymeteo.meteotrader.data.model.PolymarketAccountSnapshot
 import com.polymeteo.meteotrader.data.model.PolymarketClosedPosition
 import com.polymeteo.meteotrader.data.model.PolymarketOpenPosition
 import com.polymeteo.meteotrader.data.model.PolymarketTrade
+import com.polymeteo.meteotrader.ui.AppMode
 import com.polymeteo.meteotrader.ui.theme.DarkBase
 import com.polymeteo.meteotrader.ui.theme.DarkPanel
 import com.polymeteo.meteotrader.ui.theme.MutedInk
@@ -48,12 +49,14 @@ import kotlin.math.absoluteValue
 @Composable
 fun PolymarketAccountScreen(
     walletAddress: String,
+    appMode: AppMode,
     snapshot: PolymarketAccountSnapshot?,
     isRefreshing: Boolean,
     errorMessage: String?,
     onBack: () -> Unit,
     onRefresh: () -> Unit
 ) {
+    val isRookie = appMode == AppMode.ROOKIE
     val uriHandler = LocalUriHandler.current
 
     Scaffold(
@@ -125,6 +128,24 @@ fun PolymarketAccountScreen(
                     SummaryCard(data)
                 }
 
+                if (isRookie) {
+                    item {
+                        BaseCard(borderColor = Color(0x224FC3FF)) {
+                            Text(
+                                text = "Vista Rookie",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Aquí ves lo imprescindible: saldo estimado, posiciones abiertas, resultados y últimos movimientos. Pulsa 'Abrir' para ver el mercado original.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MutedInk,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    }
+                }
+
                 if (data.warnings.isNotEmpty()) {
                     item {
                         WarningCard(data.warnings)
@@ -132,10 +153,13 @@ fun PolymarketAccountScreen(
                 }
 
                 item {
-                    SectionTitle("Apuestas actuales (${data.openPositions.size})")
+                    SectionTitle(
+                        if (isRookie) "Apuestas abiertas (resumen) (${data.openPositions.size})"
+                        else "Apuestas actuales (${data.openPositions.size})"
+                    )
                 }
                 items(
-                    data.openPositions,
+                    if (isRookie) data.openPositions.take(5) else data.openPositions,
                     key = { position -> "${position.marketSlug}-${position.outcome}" }
                 ) { position ->
                     OpenPositionRow(
@@ -147,10 +171,13 @@ fun PolymarketAccountScreen(
                 }
 
                 item {
-                    SectionTitle("Histórico cerrado (${data.closedPositions.size})")
+                    SectionTitle(
+                        if (isRookie) "Resultados cerrados recientes (${data.closedPositions.size})"
+                        else "Histórico cerrado (${data.closedPositions.size})"
+                    )
                 }
                 items(
-                    data.closedPositions,
+                    if (isRookie) data.closedPositions.take(5) else data.closedPositions,
                     key = { position -> "${position.marketSlug}-${position.timestamp}" }
                 ) { position ->
                     ClosedPositionRow(
@@ -162,10 +189,13 @@ fun PolymarketAccountScreen(
                 }
 
                 item {
-                    SectionTitle("Movimientos recientes (${data.recentTrades.size})")
+                    SectionTitle(
+                        if (isRookie) "Movimientos recientes (resumen) (${data.recentTrades.size})"
+                        else "Movimientos recientes (${data.recentTrades.size})"
+                    )
                 }
                 items(
-                    data.recentTrades,
+                    if (isRookie) data.recentTrades.take(6) else data.recentTrades,
                     key = { trade -> "${trade.transactionHash}-${trade.timestamp}" }
                 ) { trade ->
                     TradeRow(

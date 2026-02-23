@@ -59,6 +59,7 @@ import com.polymeteo.meteotrader.data.model.TempUnit
 import com.polymeteo.meteotrader.data.model.TraderDirection
 import com.polymeteo.meteotrader.data.model.TraderOpportunity
 import com.polymeteo.meteotrader.data.model.TraderSignalLevel
+import com.polymeteo.meteotrader.ui.AppMode
 import com.polymeteo.meteotrader.ui.theme.DarkBase
 import com.polymeteo.meteotrader.ui.theme.DarkPanel
 import com.polymeteo.meteotrader.ui.theme.MutedInk
@@ -90,6 +91,7 @@ import java.util.Locale
 @Composable
 fun CityDetailScreen(
     cityData: CityWeatherData?,
+    appMode: AppMode,
     globalError: String?,
     isPremiumCalibrating: Boolean,
     paperPortfolio: PaperPortfolioSnapshot,
@@ -150,6 +152,7 @@ fun CityDetailScreen(
             }
 
             val unit = cityData.city.displayUnit
+            val isRookie = appMode == AppMode.ROOKIE
             val uriHandler = LocalUriHandler.current
             var helpTopic by remember { mutableStateOf<TraderHelpTopic?>(null) }
             var pendingBuyOpportunity by remember(cityData.city.id) { mutableStateOf<TraderOpportunity?>(null) }
@@ -380,22 +383,24 @@ fun CityDetailScreen(
                                 modifier = Modifier.padding(top = 4.dp)
                             )
                         }
-                        SourceLinkRow(
-                            label = "Fuente METAR",
-                            url = cityData.metar.sourceUrl,
-                            onOpenUrl = openExternalUrl
-                        )
-                        SourceLinkRow(
-                            label = "Fuente TAF",
-                            url = cityData.taf.sourceUrl,
-                            onOpenUrl = openExternalUrl
-                        )
-                        SourceLinkRow(
-                            label = "Fuente estación",
-                            url = cityData.controlStation.sourceUrl,
-                            onOpenUrl = openExternalUrl
-                        )
-                        if (isTodayTab && !cityData.metar.current?.rawText.isNullOrBlank()) {
+                        if (!isRookie) {
+                            SourceLinkRow(
+                                label = "Fuente METAR",
+                                url = cityData.metar.sourceUrl,
+                                onOpenUrl = openExternalUrl
+                            )
+                            SourceLinkRow(
+                                label = "Fuente TAF",
+                                url = cityData.taf.sourceUrl,
+                                onOpenUrl = openExternalUrl
+                            )
+                            SourceLinkRow(
+                                label = "Fuente estación",
+                                url = cityData.controlStation.sourceUrl,
+                                onOpenUrl = openExternalUrl
+                            )
+                        }
+                        if (!isRookie && isTodayTab && !cityData.metar.current?.rawText.isNullOrBlank()) {
                             Text(
                                 text = cityData.metar.current?.rawText.orEmpty(),
                                 style = MaterialTheme.typography.bodyMedium,
@@ -404,7 +409,7 @@ fun CityDetailScreen(
                                 modifier = Modifier.padding(top = 8.dp)
                             )
                         }
-                        if (!cityData.taf.rawText.isNullOrBlank()) {
+                        if (!isRookie && !cityData.taf.rawText.isNullOrBlank()) {
                             Text(
                                 text = cityData.taf.rawText.orEmpty(),
                                 style = MaterialTheme.typography.labelSmall,
@@ -418,15 +423,24 @@ fun CityDetailScreen(
                     }
                 }
 
-                item {
-                    ForecastHeader()
-                }
+                if (isRookie) {
+                    item {
+                        RookieForecastSummaryCard(
+                            forecasts = selectedForecasts,
+                            unit = unit
+                        )
+                    }
+                } else {
+                    item {
+                        ForecastHeader()
+                    }
 
-                items(selectedForecasts, key = { it.sourceId }) { forecast ->
-                    ForecastRow(
-                        forecast = forecast,
-                        cityData = cityData
-                    )
+                    items(selectedForecasts, key = { it.sourceId }) { forecast ->
+                        ForecastRow(
+                            forecast = forecast,
+                            cityData = cityData
+                        )
+                    }
                 }
 
                 item {
@@ -434,6 +448,7 @@ fun CityDetailScreen(
                         cityData = cityData,
                         selectedTopOpportunity = selectedTopOpportunity,
                         selectedDayTitle = selectedTab.title,
+                        rookieMode = isRookie,
                         onHelpRequested = { helpTopic = it }
                     )
                 }
@@ -453,6 +468,7 @@ fun CityDetailScreen(
                             cityData.city.zoneId,
                             "dd-MM-yyyy HH:mm"
                         ),
+                        rookieMode = isRookie,
                         isRefreshing = isPaperTradingRefreshing,
                         errorMessage = paperTradingErrorMessage,
                         warnings = paperPortfolio.warnings,
@@ -471,10 +487,17 @@ fun CityDetailScreen(
                 }
 
                 item {
-                    OperationalTraceabilityCard(
-                        selectedDayTitle = selectedTab.title,
-                        traces = selectedDecisionTrace
-                    )
+                    if (isRookie) {
+                        RookieOperationalSummaryCard(
+                            selectedDayTitle = selectedTab.title,
+                            traces = selectedDecisionTrace
+                        )
+                    } else {
+                        OperationalTraceabilityCard(
+                            selectedDayTitle = selectedTab.title,
+                            traces = selectedDecisionTrace
+                        )
+                    }
                 }
 
                 if (selectedOpportunities.isNotEmpty()) {
@@ -484,6 +507,7 @@ fun CityDetailScreen(
                     ) { opportunity ->
                         TraderOpportunityRow(
                             opportunity = opportunity,
+                            rookieMode = isRookie,
                             isPaperTradingRefreshing = isPaperTradingRefreshing,
                             onHelpRequested = { helpTopic = it },
                             onSimulateBuyYesRequested = {
@@ -748,6 +772,7 @@ private fun TraderHeader(
     cityData: CityWeatherData,
     selectedTopOpportunity: TraderOpportunity?,
     selectedDayTitle: String,
+    rookieMode: Boolean,
     onHelpRequested: (TraderHelpTopic) -> Unit
 ) {
     Column(
@@ -763,26 +788,52 @@ private fun TraderHeader(
             style = MaterialTheme.typography.titleMedium,
             color = Color(0xFF8FC8FF)
         )
-        Text(
-            text = "Query: ${cityData.polymarket.query}",
-            style = MaterialTheme.typography.labelSmall,
-            color = MutedInk,
-            modifier = Modifier.padding(top = 4.dp)
-        )
-        Text(
-            text = "Mercados evaluados: ${cityData.polymarket.marketsScanned}",
-            style = MaterialTheme.typography.labelSmall,
-            color = MutedInk
-        )
+        if (rookieMode) {
+            Text(
+                text = "La app compara pronóstico y mercado para decirte si merece entrar o esperar.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedInk,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        } else {
+            Text(
+                text = "Query: ${cityData.polymarket.query}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedInk,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            Text(
+                text = "Mercados evaluados: ${cityData.polymarket.marketsScanned}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedInk
+            )
+        }
         selectedTopOpportunity?.let { top ->
             Text(
-                text = "Top ejecutable ($selectedDayTitle): ${directionLabel(top.direction)} • ${top.recommendedBuy} ${formatPercent(top.executableEdge)} • ${if (top.shouldTrade) "BET" else "PASS"}",
+                text = if (rookieMode) {
+                    buildString {
+                        append("Mejor opción (")
+                        append(selectedDayTitle)
+                        append("): ")
+                        append(if (top.shouldTrade) "Apuesta posible" else "Mejor esperar")
+                        append(" • ")
+                        append(if (top.recommendedBuy == "YES") "Comprar SI" else "Comprar NO")
+                        append(" • ventaja real ")
+                        append(formatPercent(top.executableEdge))
+                    }
+                } else {
+                    "Top ejecutable ($selectedDayTitle): ${directionLabel(top.direction)} • ${top.recommendedBuy} ${formatPercent(top.executableEdge)} • ${if (top.shouldTrade) "BET" else "PASS"}"
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(top = 6.dp)
             )
             Text(
-                text = "Bruto ${formatPercent(top.rawEdge)} • Costes ${formatPercent(top.totalCost)} • Fill ${formatPercent(top.fillProbability)}",
+                text = if (rookieMode) {
+                    "Dificultad de ejecución: ${rookieExecutionLabel(top.fillProbability)} • Coste mercado ${formatPercent(top.totalCost)}"
+                } else {
+                    "Bruto ${formatPercent(top.rawEdge)} • Costes ${formatPercent(top.totalCost)} • Fill ${formatPercent(top.fillProbability)}"
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = MutedInk,
                 modifier = Modifier.padding(top = 4.dp)
@@ -798,7 +849,11 @@ private fun TraderHeader(
             if (selectedTopOpportunity?.marketId != topToday.marketId) {
                 val referenceHorizon = detailOpportunityDayLabel(cityData, topToday)
                 Text(
-                    text = "Referencia ${referenceHorizon.lowercase()}: ${directionLabel(topToday.direction)} • ${topToday.recommendedBuy} ${formatPercent(topToday.executableEdge)} • ${if (topToday.shouldTrade) "BET" else "PASS"}",
+                    text = if (rookieMode) {
+                        "Referencia ${referenceHorizon.lowercase()}: ${if (topToday.shouldTrade) "apuesta posible" else "esperar"} • ${if (topToday.recommendedBuy == "YES") "Comprar SI" else "Comprar NO"}"
+                    } else {
+                        "Referencia ${referenceHorizon.lowercase()}: ${directionLabel(topToday.direction)} • ${topToday.recommendedBuy} ${formatPercent(topToday.executableEdge)} • ${if (topToday.shouldTrade) "BET" else "PASS"}"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MutedInk,
                     modifier = Modifier.padding(top = 4.dp)
@@ -806,15 +861,24 @@ private fun TraderHeader(
             }
         }
 
-        ClickableHelpText(
-            text = "Calibracion local activa: ciudad + horizonte + franja",
-            topic = TraderHelpTopic.CALIBRATION,
-            color = MutedInk,
-            onHelpRequested = onHelpRequested,
-            modifier = Modifier.padding(top = 4.dp)
-        )
+        if (rookieMode) {
+            Text(
+                text = "Consejo: revisa solo 3 cosas: recomendación final, ventaja real y dificultad de ejecución.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedInk,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        } else {
+            ClickableHelpText(
+                text = "Calibracion local activa: ciudad + horizonte + franja",
+                topic = TraderHelpTopic.CALIBRATION,
+                color = MutedInk,
+                onHelpRequested = onHelpRequested,
+                modifier = Modifier.padding(top = 4.dp)
+            )
 
-        TraderHelpTerms(onHelpRequested = onHelpRequested)
+            TraderHelpTerms(onHelpRequested = onHelpRequested)
+        }
     }
 }
 
@@ -949,12 +1013,98 @@ private fun PaperTradingCityCard(
     portfolioOpenUnrealizedPnlUsdc: Double,
     portfolioClosedRealizedPnlUsdc: Double,
     generatedAtLabel: String,
+    rookieMode: Boolean,
     isRefreshing: Boolean,
     errorMessage: String?,
     warnings: List<String>,
     onRefresh: () -> Unit,
     onClosePosition: (String) -> Unit
 ) {
+    if (rookieMode) {
+        val cityPnlColor = if (openUnrealizedPnlUsdc >= 0) Positive else Negative
+        val globalPnlColor = if (portfolioClosedRealizedPnlUsdc >= 0) Positive else Negative
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp)
+                .background(Color(0x1A3D1F))
+                .border(1.dp, Color(0xAA31D26B))
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "SIMULACION (sin dinero real)",
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold),
+                    color = Color(0xFF6DF7A8)
+                )
+                TextButton(onClick = onRefresh, enabled = !isRefreshing) {
+                    Text(
+                        text = if (isRefreshing) "Actualizando..." else "Refrescar",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = if (isRefreshing) MutedInk else Color(0xFF6DF7A8)
+                    )
+                }
+            }
+            Text(
+                text = "Practica con precios reales de Polymarket. La app no envía órdenes reales.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MutedInk
+            )
+            Text(
+                text = "Abiertas en $cityName: ${cityOpenPositions.size} • Global abiertas/cerradas: $portfolioOpenPositions/$portfolioClosedPositions",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = "Resultado abierto ciudad: ${formatSignedUsd(openUnrealizedPnlUsdc)}",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                color = cityPnlColor
+            )
+            Text(
+                text = "Resultado cerrado global: ${formatSignedUsd(portfolioClosedRealizedPnlUsdc)}",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                color = globalPnlColor
+            )
+            Text(
+                text = "Capital abierto ciudad: ${formatUsd(totalOpenCostUsdc)} • Valor actual: ${formatUsd(totalOpenValueUsdc)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedInk
+            )
+            Text(
+                text = "Actualizado: $generatedAtLabel",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedInk
+            )
+            if (!errorMessage.isNullOrBlank()) {
+                Text(text = errorMessage, style = MaterialTheme.typography.labelSmall, color = Negative)
+            }
+            warnings.take(1).forEach { warning ->
+                Text(text = "Aviso: $warning", style = MaterialTheme.typography.labelSmall, color = Color(0xFFFFC857))
+            }
+            if (cityOpenPositions.isEmpty()) {
+                Text(
+                    text = "No tienes posiciones abiertas en esta ciudad.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedInk
+                )
+            } else {
+                cityOpenPositions.take(3).forEach { position ->
+                    RookiePaperPositionRow(
+                        position = position,
+                        isRefreshing = isRefreshing,
+                        onClosePosition = onClosePosition
+                    )
+                }
+            }
+        }
+        return
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1316,8 +1466,292 @@ private fun ForecastRow(
 }
 
 @Composable
+private fun RookieForecastSummaryCard(
+    forecasts: List<ForecastSourceResult>,
+    unit: TempUnit
+) {
+    val success = forecasts.filter { it.status == SourceStatus.SUCCESS }
+    val errors = forecasts.count { it.status == SourceStatus.ERROR }
+    val skipped = forecasts.count { it.status == SourceStatus.SKIPPED }
+    val best = success.mapNotNull { forecast ->
+        val maxValue = if (unit == TempUnit.C) forecast.maxTempC else forecast.maxTempF
+        maxValue?.let { value -> forecast.sourceName to value }
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .background(DarkPanel)
+            .border(1.dp, Color(0x22FFFFFF))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = "Pronósticos revisados automáticamente",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = "Fuentes OK: ${success.size} • Con error: $errors • Omitidas: $skipped",
+            style = MaterialTheme.typography.labelSmall,
+            color = MutedInk
+        )
+        if (best.isNotEmpty()) {
+            val preview = best
+                .sortedByDescending { it.second }
+                .take(3)
+                .joinToString(" • ") { (name, value) ->
+                    "${shortForecastName(name)} ${formatTemperature(value, unit)}"
+                }
+            Text(
+                text = "Máximas más altas detectadas: $preview",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        } else {
+            Text(
+                text = "Ahora mismo no hay pronósticos válidos para resumir.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MutedInk
+            )
+        }
+    }
+}
+
+@Composable
+private fun RookieOperationalSummaryCard(
+    selectedDayTitle: String,
+    traces: List<DecisionTraceEntry>
+) {
+    val discarded = traces.filter { it.status == DecisionTraceStatus.DISCARDED }
+    val kept = traces.count { it.status == DecisionTraceStatus.KEPT }
+    val groupedReasons = linkedMapOf<String, Int>()
+    discarded.forEach { trace ->
+        val label = rookieTraceReasonLabel(trace.reason)
+        groupedReasons[label] = (groupedReasons[label] ?: 0) + 1
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .background(Color(0x101C2EFF))
+            .border(1.dp, Color(0x2F77C4FF))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = "Por qué la app muestra (o no) mercados en $selectedDayTitle",
+            style = MaterialTheme.typography.titleSmall,
+            color = Color(0xFF8FC8FF)
+        )
+        Text(
+            text = "Mantenidos: $kept • Descartados: ${discarded.size}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MutedInk
+        )
+        if (discarded.isEmpty()) {
+            Text(
+                text = "No hay descartes registrados para este día.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MutedInk
+            )
+        } else {
+            groupedReasons.entries
+                .sortedByDescending { it.value }
+                .take(4)
+                .forEach { (reason, count) ->
+                    Text(
+                        text = "• $reason ($count)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+        }
+    }
+}
+
+@Composable
+private fun RookiePaperPositionRow(
+    position: PaperPosition,
+    isRefreshing: Boolean,
+    onClosePosition: (String) -> Unit
+) {
+    val pnl = position.unrealizedPnlUsdc ?: 0.0
+    val pnlColor = if (pnl >= 0) Positive else Negative
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0x112B2B2B))
+            .border(1.dp, Color(0x3344FF88))
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = position.question,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = "Compraste SI ${formatPercent(position.entryYesPrice)} • ${formatUsd(position.stakeUsdc)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedInk
+            )
+            Text(
+                text = "Resultado abierto: ${formatSignedUsd(pnl)}",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                color = pnlColor
+            )
+        }
+        TextButton(
+            onClick = { onClosePosition(position.id) },
+            enabled = !isRefreshing
+        ) {
+            Text(
+                text = "Cerrar",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                color = Color(0xFFFFC857)
+            )
+        }
+    }
+}
+
+@Composable
+private fun RookieTraderOpportunityRow(
+    opportunity: TraderOpportunity,
+    signalColor: Color,
+    actionColor: Color,
+    canSimulateBuyYes: Boolean,
+    isPaperTradingRefreshing: Boolean,
+    onSimulateBuyYesRequested: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .background(DarkPanel)
+            .border(1.dp, Color(0x22FFFFFF))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        Text(
+            text = opportunity.question,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = buildString {
+                append(if (opportunity.shouldTrade) "APUESTA POSIBLE" else "MEJOR ESPERAR")
+                append(" • ")
+                append(if (opportunity.recommendedBuy == "YES") "Comprar SI" else "Comprar NO")
+                append(" • ")
+                append(signalLabel(opportunity.signal))
+            },
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+            color = if (opportunity.shouldTrade) actionColor else signalColor
+        )
+        Text(
+            text = "Ventaja real ${formatPercent(opportunity.executableEdge)} • Dificultad ${rookieExecutionLabel(opportunity.fillProbability)} • Coste ${formatPercent(opportunity.totalCost)}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MutedInk
+        )
+        Text(
+            text = "Precio ahora: SI ${formatPercent(opportunity.yesPrice)} / NO ${formatPercent(opportunity.noPrice)} • Liquidez ${opportunity.liquidity?.let { String.format(Locale.US, "%.0f", it) } ?: "--"}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MutedInk
+        )
+        Text(
+            text = rookieOpportunityGuidance(opportunity),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0x1A2E7D32))
+                .border(1.dp, Color(0x552ED573))
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Simulación (sin dinero real)",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = Color(0xFF6DF7A8)
+                )
+                Text(
+                    text = "Puedes probar la compra de SI con datos reales.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MutedInk
+                )
+            }
+            TextButton(
+                onClick = onSimulateBuyYesRequested,
+                enabled = canSimulateBuyYes && !isPaperTradingRefreshing
+            ) {
+                Text(
+                    text = if (isPaperTradingRefreshing) "Procesando..." else "Probar compra SI",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = if (canSimulateBuyYes) Color(0xFF6DF7A8) else MutedInk
+                )
+            }
+        }
+    }
+}
+
+private fun rookieExecutionLabel(fillProbability: Double): String {
+    return when {
+        fillProbability >= 0.75 -> "baja (fácil entrar)"
+        fillProbability >= 0.55 -> "media"
+        else -> "alta (puede costar ejecutar)"
+    }
+}
+
+private fun rookieOpportunityGuidance(opportunity: TraderOpportunity): String {
+    if (!opportunity.shouldTrade) {
+        return "La app recomienda esperar: la ventaja real es insuficiente después de costes y dificultad de ejecución."
+    }
+    return when {
+        opportunity.signal == TraderSignalLevel.GREEN ->
+            "Buena oportunidad según el motor. Aun así, revisa que el precio no cambie antes de confirmar."
+        opportunity.signal == TraderSignalLevel.YELLOW ->
+            "Entrada posible, pero con más riesgo de ejecución o menor ventaja. Mejor tamaño pequeño."
+        else ->
+            "La señal es débil. Normalmente conviene esperar mejor precio o mejor contexto."
+    }
+}
+
+private fun rookieTraceReasonLabel(reason: String): String {
+    val normalized = reason.lowercase(Locale.US)
+    return when {
+        "spread" in normalized -> "Spread alto (entrar/salir sale caro)"
+        "liquidez" in normalized -> "Liquidez baja (poca profundidad)"
+        "volumen" in normalized -> "Poca actividad en el mercado"
+        "fill" in normalized -> "Difícil ejecutar bien la orden"
+        "edge" in normalized || "ventaja" in normalized -> "Ventaja real insuficiente"
+        "dominad" in normalized -> "Mercado casi resuelto (poco valor)"
+        "imposible" in normalized || "invalida" in normalized -> "Bucket imposible por máxima ya observada"
+        "modelo" in normalized || "mm/mma" in normalized -> "Faltan datos de pronóstico para evaluar"
+        else -> reason
+    }
+}
+
+private fun shortForecastName(name: String): String {
+    return name
+        .replace("Open-Meteo ", "")
+        .replace("ECMWF ", "")
+        .replace("Weather.gov", "NWS")
+        .replace("OpenWeatherMap", "OWM")
+}
+
+@Composable
 private fun TraderOpportunityRow(
     opportunity: TraderOpportunity,
+    rookieMode: Boolean,
     isPaperTradingRefreshing: Boolean,
     onHelpRequested: (TraderHelpTopic) -> Unit,
     onSimulateBuyYesRequested: () -> Unit
@@ -1329,6 +1763,18 @@ private fun TraderOpportunityRow(
     }
     val actionColor = if (opportunity.shouldTrade) Positive else Neutral
     val canSimulateBuyYes = opportunity.shouldTrade && opportunity.signal != TraderSignalLevel.RED
+
+    if (rookieMode) {
+        RookieTraderOpportunityRow(
+            opportunity = opportunity,
+            signalColor = signalColor,
+            actionColor = actionColor,
+            canSimulateBuyYes = canSimulateBuyYes,
+            isPaperTradingRefreshing = isPaperTradingRefreshing,
+            onSimulateBuyYesRequested = onSimulateBuyYesRequested
+        )
+        return
+    }
 
     Column(
         modifier = Modifier

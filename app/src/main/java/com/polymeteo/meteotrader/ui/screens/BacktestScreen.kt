@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -37,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import com.polymeteo.meteotrader.data.model.BacktestCityStat
 import com.polymeteo.meteotrader.data.model.BacktestSettlementPreview
 import com.polymeteo.meteotrader.data.model.BacktestStrategyStat
+import com.polymeteo.meteotrader.ui.AppMode
 import com.polymeteo.meteotrader.ui.MeteoUiState
 import com.polymeteo.meteotrader.ui.theme.DarkBase
 import com.polymeteo.meteotrader.ui.theme.DarkPanel
@@ -53,10 +55,12 @@ import java.util.Locale
 @Composable
 fun BacktestScreen(
     state: MeteoUiState,
+    appMode: AppMode,
     onBack: () -> Unit,
     onRefresh: () -> Unit
 ) {
     val report = state.backtestReport
+    val isRookie = appMode == AppMode.ROOKIE
     var helpTopic by remember { mutableStateOf<BacktestHelpTopic?>(null) }
 
     Scaffold(
@@ -90,6 +94,17 @@ fun BacktestScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            if (isRookie) {
+                RookieBacktestContent(
+                    state = state,
+                    onHelpRequested = { helpTopic = it }
+                )
+                helpTopic?.let { topic ->
+                    BacktestHelpDialog(topic = topic, onDismiss = { helpTopic = null })
+                }
+                return@PullToRefreshBox
+            }
+
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
@@ -195,6 +210,172 @@ fun BacktestScreen(
             }
         }
     }
+}
+
+@Composable
+private fun RookieBacktestContent(
+    state: MeteoUiState,
+    onHelpRequested: (BacktestHelpTopic) -> Unit
+) {
+    val report = state.backtestReport
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        if (!state.backtestErrorMessage.isNullOrBlank()) {
+            item {
+                MessageCard(
+                    title = "Error",
+                    message = state.backtestErrorMessage,
+                    color = Negative
+                )
+            }
+        }
+
+        if (report.warnings.isNotEmpty()) {
+            item {
+                MessageCard(
+                    title = "Avisos",
+                    message = report.warnings.take(4).joinToString("\n") { "• $it" },
+                    color = Color(0xFFFFC857)
+                )
+            }
+        }
+
+        item {
+            RookieBacktestSummaryCard(report = report)
+        }
+
+        item {
+            Text(
+                text = "Ciudades donde la simulación va mejor (ranking simple)",
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
+
+        if (report.cityStats.isEmpty()) {
+            item { EmptyCard("Todavía no hay suficientes resultados para comparar ciudades.") }
+        } else {
+            items(report.cityStats.take(5), key = { it.cityId }) { stat ->
+                RookieBacktestCityRow(stat)
+            }
+        }
+
+        item {
+            Text(
+                text = "Últimos resultados (para comprobar si el plan funciona)",
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
+
+        if (report.recentSettlements.isEmpty()) {
+            item { EmptyCard("Sin liquidaciones recientes.") }
+        } else {
+            items(report.recentSettlements.take(5), key = { "${it.cityName}-${it.snapshotAt}" }) { settlement ->
+                RookieSettlementRow(settlement)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RookieBacktestSummaryCard(report: com.polymeteo.meteotrader.data.model.BacktestReport) {
+    val pnlColor = if (report.totalPnlUnits >= 0) Positive else Negative
+    val gapColor = if ((report.executionGapUnits) >= 0) Positive else Negative
+    SummaryContainerCard {
+        Text(
+            text = "Resumen fácil de simulación",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = "Sirve para comprobar si las ideas buenas en teoría también funcionan al ejecutar.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MutedInk,
+            modifier = Modifier.padding(top = 4.dp)
+        )
+        RookieStatLine("Operaciones simuladas", report.simulatedTrades.toString())
+        RookieStatLine("Operaciones ejecutadas", report.executedTrades.toString())
+        RookieStatLine("Prob. de ejecución (fill)", report.fillRate?.let { formatPercent(it) } ?: "--")
+        RookieStatLine("Resultado total", formatSignedUnits(report.totalPnlUnits), pnlColor)
+        RookieStatLine("Resultado esperado", formatSignedUnits(report.expectedPnlUnits))
+        RookieStatLine("Diferencia ejecución real vs esperada", formatSignedUnits(report.executionGapUnits), gapColor)
+        RookieStatLine("Riesgo bloqueado (kill-switch)", if (report.guardrailKillSwitchActive) "Sí" else "No")
+    }
+}
+
+@Composable
+private fun RookieBacktestCityRow(stat: BacktestCityStat) {
+    val pnlColor = if (stat.totalPnlUnits >= 0) Positive else Negative
+    SummaryContainerCard {
+        Text(
+            text = stat.cityName,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        RookieStatLine("Ejecutadas / liquidadas", "${stat.executedTrades}/${stat.settledTrades}")
+        RookieStatLine("Fill", stat.fillRate?.let { formatPercent(it) } ?: "--")
+        RookieStatLine("Acierto", stat.hitRate?.let { formatPercent(it) } ?: "--")
+        RookieStatLine("Resultado", formatSignedUnits(stat.totalPnlUnits), pnlColor)
+    }
+}
+
+@Composable
+private fun RookieSettlementRow(settlement: BacktestSettlementPreview) {
+    val pnlColor = if (settlement.pnlUnits >= 0) Positive else Negative
+    SummaryContainerCard {
+        Text(
+            text = "${settlement.cityName} • ${directionLabel(settlement.direction)} • ${settlement.recommendedBuy}",
+            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = settlement.question,
+            style = MaterialTheme.typography.labelSmall,
+            color = MutedInk,
+            maxLines = 2
+        )
+        RookieStatLine("Se ejecutó", if (settlement.executed) "Sí" else "No")
+        RookieStatLine("Resultado", formatSignedUnits(settlement.pnlUnits), pnlColor)
+        RookieStatLine("Esperado", formatSignedUnits(settlement.expectedPnlUnits))
+    }
+}
+
+@Composable
+private fun SummaryContainerCard(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(DarkPanel)
+            .border(1.dp, Color(0x22FFFFFF))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        content = content
+    )
+}
+
+@Composable
+private fun RookieStatLine(label: String, value: String, valueColor: Color = MaterialTheme.colorScheme.onSurface) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(text = label, style = MaterialTheme.typography.bodySmall, color = MutedInk, modifier = Modifier.weight(1f))
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+            color = valueColor
+        )
+    }
+}
+
+private fun formatSignedUnits(value: Double): String {
+    val sign = if (value >= 0) "+" else "-"
+    return "$sign" + String.format(Locale.US, "%.2f u", kotlin.math.abs(value))
 }
 
 @Composable

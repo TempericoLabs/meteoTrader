@@ -71,6 +71,7 @@ fun MeteoTraderApp(
         composable(Routes.Backtest) {
             BacktestScreen(
                 state = uiState,
+                appMode = uiState.appMode,
                 onBack = { navController.popBackStack() },
                 onRefresh = { viewModel.refreshBacktest() }
             )
@@ -83,6 +84,7 @@ fun MeteoTraderApp(
             val cityId = backStackEntry.arguments?.getString("cityId").orEmpty()
             CityDetailScreen(
                 cityData = uiState.cities.firstOrNull { it.city.id == cityId },
+                appMode = uiState.appMode,
                 globalError = uiState.errorMessage,
                 isPremiumCalibrating = uiState.premiumRefreshingCityIds.contains(cityId),
                 paperPortfolio = uiState.paperPortfolio,
@@ -114,6 +116,7 @@ fun MeteoTraderApp(
             val cityId = backStackEntry.arguments?.getString("cityId").orEmpty()
             PolyTempPremiumScreen(
                 cityData = uiState.cities.firstOrNull { it.city.id == cityId },
+                appMode = uiState.appMode,
                 report = uiState.premiumReportsByCity[cityId],
                 isRefreshing = uiState.premiumRefreshingCityIds.contains(cityId),
                 errorMessage = uiState.premiumErrorsByCity[cityId],
@@ -130,6 +133,7 @@ fun MeteoTraderApp(
             }
             PolymarketAccountScreen(
                 walletAddress = uiState.polymarketWalletAddress,
+                appMode = uiState.appMode,
                 snapshot = uiState.polymarketAccountSnapshot,
                 isRefreshing = uiState.isPolymarketAccountRefreshing,
                 errorMessage = uiState.polymarketAccountErrorMessage,

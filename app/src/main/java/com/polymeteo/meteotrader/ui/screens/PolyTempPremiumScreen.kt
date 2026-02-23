@@ -43,6 +43,7 @@ import com.polymeteo.meteotrader.data.model.CityWeatherData
 import com.polymeteo.meteotrader.data.model.PolyTempPremiumModelStat
 import com.polymeteo.meteotrader.data.model.PolyTempPremiumReport
 import com.polymeteo.meteotrader.data.model.TempUnit
+import com.polymeteo.meteotrader.ui.AppMode
 import com.polymeteo.meteotrader.ui.theme.DarkBase
 import com.polymeteo.meteotrader.ui.theme.DarkPanel
 import com.polymeteo.meteotrader.ui.theme.MutedInk
@@ -59,12 +60,14 @@ import java.util.Locale
 @Composable
 fun PolyTempPremiumScreen(
     cityData: CityWeatherData?,
+    appMode: AppMode,
     report: PolyTempPremiumReport?,
     isRefreshing: Boolean,
     errorMessage: String?,
     onBack: () -> Unit,
     onRefresh: () -> Unit
 ) {
+    val isRookie = appMode == AppMode.ROOKIE
     val cityName = cityData?.city?.name ?: report?.cityName ?: "Media Modelos Ajustada (MMA)"
     val displayUnit = cityData?.city?.displayUnit ?: TempUnit.C
     val cityZoneId = cityData?.city?.zoneId ?: "UTC"
@@ -112,13 +115,22 @@ fun PolyTempPremiumScreen(
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                item {
-                    SummaryCard(
-                        report = report,
-                        cityZoneId = cityZoneId,
-                        isRefreshing = isRefreshing,
-                        onHelpRequested = { helpTopic = it }
-                    )
+                if (isRookie) {
+                    item {
+                        RookiePremiumSummaryCard(
+                            report = report,
+                            visibleRanking = visibleRanking
+                        )
+                    }
+                } else {
+                    item {
+                        SummaryCard(
+                            report = report,
+                            cityZoneId = cityZoneId,
+                            isRefreshing = isRefreshing,
+                            onHelpRequested = { helpTopic = it }
+                        )
+                    }
                 }
 
                 if (!errorMessage.isNullOrBlank()) {
@@ -141,25 +153,37 @@ fun PolyTempPremiumScreen(
                     }
                 }
 
-                item {
-                    SectionTitle(
-                        title = "Ranking vivo de modelos",
-                        topic = PremiumHelpTopic.RANKING,
-                        onHelpRequested = { helpTopic = it }
-                    )
-                }
-
-                if (report == null) {
-                    item { EmptyCard("Cargando ranking de modelos...") }
-                } else if (visibleRanking.isEmpty()) {
-                    item { EmptyCard("Aun no hay verificacion suficiente para crear ranking.") }
-                } else {
-                    items(visibleRanking, key = { it.providerId }) { stat ->
-                        ModelRankingRow(
-                            stat = stat,
-                            displayUnit = displayUnit,
+                if (!isRookie) {
+                    item {
+                        SectionTitle(
+                            title = "Ranking vivo de modelos",
+                            topic = PremiumHelpTopic.RANKING,
                             onHelpRequested = { helpTopic = it }
                         )
+                    }
+
+                    if (report == null) {
+                        item { EmptyCard("Cargando ranking de modelos...") }
+                    } else if (visibleRanking.isEmpty()) {
+                        item { EmptyCard("Aun no hay verificacion suficiente para crear ranking.") }
+                    } else {
+                        items(visibleRanking, key = { it.providerId }) { stat ->
+                            ModelRankingRow(
+                                stat = stat,
+                                displayUnit = displayUnit,
+                                onHelpRequested = { helpTopic = it }
+                            )
+                        }
+                    }
+                } else {
+                    if (report == null) {
+                        item { EmptyCard("Calculando ajuste histórico (MMA)...") }
+                    } else if (visibleRanking.isEmpty()) {
+                        item { EmptyCard("Aún no hay suficiente histórico para resumir el ajuste.") }
+                    } else {
+                        items(visibleRanking.take(5), key = { it.providerId }) { stat ->
+                            RookieModelRankingRow(stat = stat)
+                        }
                     }
                 }
 
@@ -179,6 +203,102 @@ fun PolyTempPremiumScreen(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun RookiePremiumSummaryCard(
+    report: PolyTempPremiumReport?,
+    visibleRanking: List<PolyTempPremiumModelStat>
+) {
+    val top = visibleRanking.firstOrNull()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(DarkPanel)
+            .border(1.dp, Color(0x22FFFFFF))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Text(
+            text = "Qué hace esta pantalla (versión fácil)",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = "La MMA aprende qué modelos aciertan más en esta ciudad y les da más peso.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MutedInk
+        )
+        if (report == null) {
+            Text(
+                text = "Todavía se está calculando el ajuste histórico.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedInk
+            )
+        } else {
+            Text(
+                text = "Días verificados: ${report.verifiedDays} • Pendientes: ${report.pendingDays}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedInk
+            )
+            top?.let { stat ->
+                val share = visibleRanking.sumOf { it.dynamicWeight }
+                    .takeIf { it > 0.0 }
+                    ?.let { total -> stat.dynamicWeight / total }
+                    ?: 0.0
+                Text(
+                    text = "Modelo que más pesa ahora: ${stat.providerName}",
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = Positive
+                )
+                Text(
+                    text = "Peso actual: ${formatPercent(share)} • Error medio: ${stat.meanAbsoluteErrorC?.let { String.format(Locale.US, "%.2f°C", it) } ?: "--"}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MutedInk
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RookieModelRankingRow(stat: PolyTempPremiumModelStat) {
+    val trendColor = when {
+        stat.previousDynamicWeight == null -> MutedInk
+        stat.dynamicWeight > stat.previousDynamicWeight + 1e-9 -> Positive
+        stat.dynamicWeight < stat.previousDynamicWeight - 1e-9 -> Negative
+        else -> Color(0xFFFFC857)
+    }
+    val trendLabel = when {
+        stat.previousDynamicWeight == null -> "nuevo"
+        stat.dynamicWeight > (stat.previousDynamicWeight ?: 0.0) + 1e-9 -> "sube"
+        stat.dynamicWeight < (stat.previousDynamicWeight ?: 0.0) - 1e-9 -> "baja"
+        else -> "igual"
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(DarkPanel)
+            .border(1.dp, Color(0x22FFFFFF))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        Text(
+            text = stat.providerName,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = "Peso actual ${String.format(Locale.US, "%.2f", stat.dynamicWeight)} • tendencia $trendLabel",
+            style = MaterialTheme.typography.labelSmall,
+            color = trendColor
+        )
+        Text(
+            text = "Error medio ${stat.meanAbsoluteErrorC?.let { String.format(Locale.US, "%.2f°C", it) } ?: "--"} • cobertura ${stat.coverage?.let { formatPercent(it) } ?: "--"}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MutedInk
+        )
     }
 }
 
