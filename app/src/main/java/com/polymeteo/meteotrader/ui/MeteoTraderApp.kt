@@ -85,10 +85,24 @@ fun MeteoTraderApp(
                 cityData = uiState.cities.firstOrNull { it.city.id == cityId },
                 globalError = uiState.errorMessage,
                 isPremiumCalibrating = uiState.premiumRefreshingCityIds.contains(cityId),
+                paperPortfolio = uiState.paperPortfolio,
+                isPaperTradingRefreshing = uiState.isPaperTradingRefreshing,
+                paperTradingErrorMessage = uiState.paperTradingErrorMessage,
                 onBack = { navController.popBackStack() },
                 onRefresh = { viewModel.refreshCity(cityId) },
+                onRefreshPaperTrading = { viewModel.refreshPaperTrading() },
                 onOpenPolyTempPremium = {
                     navController.navigate("${Routes.PremiumBase}/$cityId")
+                },
+                onSimulateBuyYes = { marketId, stakeUsdc ->
+                    viewModel.simulateBuyYes(
+                        cityId = cityId,
+                        marketId = marketId,
+                        stakeUsdc = stakeUsdc
+                    )
+                },
+                onSimulateClosePosition = { positionId ->
+                    viewModel.simulateClosePosition(positionId)
                 }
             )
         }

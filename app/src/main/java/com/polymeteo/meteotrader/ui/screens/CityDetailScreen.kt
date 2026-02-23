@@ -3,6 +3,7 @@ package com.polymeteo.meteotrader.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -42,11 +44,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.polymeteo.meteotrader.data.model.CityWeatherData
 import com.polymeteo.meteotrader.data.model.DecisionTraceEntry
 import com.polymeteo.meteotrader.data.model.DecisionTraceStatus
 import com.polymeteo.meteotrader.data.model.ForecastSourceResult
+import com.polymeteo.meteotrader.data.model.PaperPortfolioSnapshot
+import com.polymeteo.meteotrader.data.model.PaperPosition
+import com.polymeteo.meteotrader.data.model.PaperPositionStatus
 import com.polymeteo.meteotrader.data.model.PremiumComputationSource
 import com.polymeteo.meteotrader.data.model.SourceStatus
 import com.polymeteo.meteotrader.data.model.TempUnit
@@ -72,10 +78,12 @@ import com.polymeteo.meteotrader.util.metarPreviousInUnit
 import com.polymeteo.meteotrader.util.observedMaxInUnit
 import com.polymeteo.meteotrader.util.polyTempInUnit
 import com.polymeteo.meteotrader.util.polyTempPremiumInUnit
+import kotlinx.coroutines.delay
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -83,9 +91,15 @@ fun CityDetailScreen(
     cityData: CityWeatherData?,
     globalError: String?,
     isPremiumCalibrating: Boolean,
+    paperPortfolio: PaperPortfolioSnapshot,
+    isPaperTradingRefreshing: Boolean,
+    paperTradingErrorMessage: String?,
     onBack: () -> Unit,
     onRefresh: () -> Unit,
-    onOpenPolyTempPremium: () -> Unit
+    onRefreshPaperTrading: () -> Unit,
+    onOpenPolyTempPremium: () -> Unit,
+    onSimulateBuyYes: (marketId: String, stakeUsdc: Double) -> Unit,
+    onSimulateClosePosition: (positionId: String) -> Unit
 ) {
     LaunchedEffect(cityData?.city?.id) {
         if (cityData == null) onRefresh()
@@ -137,6 +151,8 @@ fun CityDetailScreen(
             val unit = cityData.city.displayUnit
             val uriHandler = LocalUriHandler.current
             var helpTopic by remember { mutableStateOf<TraderHelpTopic?>(null) }
+            var pendingBuyOpportunity by remember(cityData.city.id) { mutableStateOf<TraderOpportunity?>(null) }
+            var pendingStakeInput by rememberSaveable(cityData.city.id) { mutableStateOf("10") }
             val openExternalUrl: (String) -> Unit = { url ->
                 runCatching { uriHandler.openUri(url) }
             }
@@ -274,6 +290,21 @@ fun CityDetailScreen(
                     }.thenBy { trace -> trace.stage }
                 )
             val opportunitiesByDate = cityData.polymarket.opportunities.groupBy { it.condition.targetDate }
+            val cityPaperPositions = paperPortfolio.positions.filter { position ->
+                position.cityId == cityData.city.id
+            }
+            val cityOpenPaperPositions = cityPaperPositions.filter { position ->
+                position.status == PaperPositionStatus.OPEN
+            }
+
+            LaunchedEffect(cityData.city.id, cityOpenPaperPositions.size) {
+                if (cityOpenPaperPositions.isEmpty()) return@LaunchedEffect
+                while (true) {
+                    delay(PAPER_AUTO_SYNC_MS)
+                    onRefresh()
+                    onRefreshPaperTrading()
+                }
+            }
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -407,6 +438,29 @@ fun CityDetailScreen(
                 }
 
                 item {
+                    PaperTradingCityCard(
+                        cityName = cityData.city.name,
+                        cityOpenPositions = cityOpenPaperPositions,
+                        openUnrealizedPnlUsdc = cityOpenPaperPositions.sumOf { it.unrealizedPnlUsdc ?: 0.0 },
+                        totalOpenValueUsdc = cityOpenPaperPositions.sumOf { it.currentValueUsdc ?: 0.0 },
+                        totalOpenCostUsdc = cityOpenPaperPositions.sumOf { it.totalCostUsdc },
+                        portfolioOpenPositions = paperPortfolio.openPositions,
+                        portfolioClosedPositions = paperPortfolio.closedPositions,
+                        portfolioOpenUnrealizedPnlUsdc = paperPortfolio.openUnrealizedPnlUsdc,
+                        portfolioClosedRealizedPnlUsdc = paperPortfolio.closedRealizedPnlUsdc,
+                        generatedAtLabel = paperPortfolio.generatedAt.formatInZone(
+                            cityData.city.zoneId,
+                            "dd-MM-yyyy HH:mm"
+                        ),
+                        isRefreshing = isPaperTradingRefreshing,
+                        errorMessage = paperTradingErrorMessage,
+                        warnings = paperPortfolio.warnings,
+                        onRefresh = onRefreshPaperTrading,
+                        onClosePosition = onSimulateClosePosition
+                    )
+                }
+
+                item {
                     TraderDaySelector(
                         tabs = dayTabs,
                         selectedIndex = selectedDayIndex,
@@ -429,7 +483,12 @@ fun CityDetailScreen(
                     ) { opportunity ->
                         TraderOpportunityRow(
                             opportunity = opportunity,
-                            onHelpRequested = { helpTopic = it }
+                            isPaperTradingRefreshing = isPaperTradingRefreshing,
+                            onHelpRequested = { helpTopic = it },
+                            onSimulateBuyYesRequested = {
+                                pendingStakeInput = "10"
+                                pendingBuyOpportunity = opportunity
+                            }
                         )
                     }
                 } else {
@@ -503,6 +562,19 @@ fun CityDetailScreen(
                 TraderHelpDialog(
                     topic = topic,
                     onDismiss = { helpTopic = null }
+                )
+            }
+
+            pendingBuyOpportunity?.let { opportunity ->
+                SimulatedBuyYesDialog(
+                    opportunity = opportunity,
+                    stakeInput = pendingStakeInput,
+                    onStakeInputChange = { pendingStakeInput = it },
+                    onDismiss = { pendingBuyOpportunity = null },
+                    onConfirm = { stakeUsdc ->
+                        onSimulateBuyYes(opportunity.marketId, stakeUsdc)
+                        pendingBuyOpportunity = null
+                    }
                 )
             }
         }
@@ -850,6 +922,287 @@ private fun traceStageLabel(stage: String): String {
 }
 
 @Composable
+private fun PaperTradingCityCard(
+    cityName: String,
+    cityOpenPositions: List<PaperPosition>,
+    openUnrealizedPnlUsdc: Double,
+    totalOpenValueUsdc: Double,
+    totalOpenCostUsdc: Double,
+    portfolioOpenPositions: Int,
+    portfolioClosedPositions: Int,
+    portfolioOpenUnrealizedPnlUsdc: Double,
+    portfolioClosedRealizedPnlUsdc: Double,
+    generatedAtLabel: String,
+    isRefreshing: Boolean,
+    errorMessage: String?,
+    warnings: List<String>,
+    onRefresh: () -> Unit,
+    onClosePosition: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .background(Color(0x1A3D1F))
+            .border(1.dp, Color(0xAA31D26B))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "MODO SIMULACION ACTIVO",
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.ExtraBold),
+                color = Color(0xFF6DF7A8)
+            )
+            TextButton(onClick = onRefresh, enabled = !isRefreshing) {
+                Text(
+                    text = if (isRefreshing) "Actualizando..." else "Refrescar sim",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = if (isRefreshing) MutedInk else Color(0xFF6DF7A8)
+                )
+            }
+        }
+
+        Text(
+            text = "Solo simulación (paper). Ninguna operación se envía a Polymarket.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MutedInk
+        )
+        Text(
+            text = "Generado: $generatedAtLabel",
+            style = MaterialTheme.typography.labelSmall,
+            color = MutedInk
+        )
+        Text(
+            text = "Auto-sync cada 20s mientras haya posiciones abiertas en esta ciudad.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MutedInk
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "$cityName abiertas: ${cityOpenPositions.size}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = "Global abiertas/cerradas: $portfolioOpenPositions/$portfolioClosedPositions",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedInk
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "Coste abierto ciudad: ${formatUsd(totalOpenCostUsdc)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedInk
+            )
+            Text(
+                text = "Valor abierto ciudad: ${formatUsd(totalOpenValueUsdc)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MutedInk
+            )
+        }
+
+        val cityPnlColor = if (openUnrealizedPnlUsdc >= 0) Positive else Negative
+        val globalPnlColor = if (portfolioOpenUnrealizedPnlUsdc >= 0) Positive else Negative
+        val globalRealizedColor = if (portfolioClosedRealizedPnlUsdc >= 0) Positive else Negative
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "PnL abierto ciudad: ${formatSignedUsd(openUnrealizedPnlUsdc)}",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                color = cityPnlColor
+            )
+            Text(
+                text = "PnL abierto global: ${formatSignedUsd(portfolioOpenUnrealizedPnlUsdc)}",
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                color = globalPnlColor
+            )
+        }
+
+        Text(
+            text = "PnL cerrado global: ${formatSignedUsd(portfolioClosedRealizedPnlUsdc)}",
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+            color = globalRealizedColor
+        )
+
+        if (!errorMessage.isNullOrBlank()) {
+            Text(
+                text = errorMessage,
+                style = MaterialTheme.typography.labelSmall,
+                color = Negative
+            )
+        }
+
+        if (warnings.isNotEmpty()) {
+            warnings.take(2).forEach { warning ->
+                Text(
+                    text = "Aviso: $warning",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFFFFC857)
+                )
+            }
+        }
+
+        if (cityOpenPositions.isEmpty()) {
+            Text(
+                text = "No hay posiciones abiertas en esta ciudad.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MutedInk
+            )
+        } else {
+            cityOpenPositions.take(5).forEach { position ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0x112B2B2B))
+                        .border(1.dp, Color(0x3344FF88))
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = position.question,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "YES ${formatPercent(position.entryYesPrice)} • Stake ${formatUsd(position.stakeUsdc)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MutedInk
+                        )
+                        Text(
+                            text = "Mark ${formatPercent(position.currentYesPrice ?: position.entryYesPrice)} • PnL ${formatSignedUsd(position.unrealizedPnlUsdc ?: 0.0)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if ((position.unrealizedPnlUsdc ?: 0.0) >= 0) Positive else Negative
+                        )
+                    }
+                    TextButton(
+                        onClick = { onClosePosition(position.id) },
+                        enabled = !isRefreshing
+                    ) {
+                        Text(
+                            text = "Cerrar (sim)",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                            color = Color(0xFFFFC857)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SimulatedBuyYesDialog(
+    opportunity: TraderOpportunity,
+    stakeInput: String,
+    onStakeInputChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: (Double) -> Unit
+) {
+    var localError by remember(opportunity.marketId) { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("Simular compra YES")
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = "Mercado: ${opportunity.question}",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    text = "Precio YES actual: ${formatPercent(opportunity.yesPrice)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MutedInk
+                )
+                Text(
+                    text = "Modo paper: no se envía ninguna orden real.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFF6DF7A8)
+                )
+                OutlinedTextField(
+                    value = stakeInput,
+                    onValueChange = {
+                        localError = null
+                        onStakeInputChange(it)
+                    },
+                    singleLine = true,
+                    label = { Text("Cantidad USDC") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                )
+                if (!localError.isNullOrBlank()) {
+                    Text(
+                        text = localError.orEmpty(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Negative
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val parsed = parseStake(stakeInput)
+                    if (parsed == null || parsed <= 0.0) {
+                        localError = "Introduce una cantidad válida en USDC."
+                    } else {
+                        onConfirm(parsed)
+                    }
+                }
+            ) {
+                Text("Confirmar compra SI (sim)")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancelar")
+            }
+        }
+    )
+}
+
+private fun parseStake(raw: String): Double? {
+    val normalized = raw
+        .trim()
+        .replace(",", ".")
+    if (normalized.isBlank()) return null
+    return normalized.toDoubleOrNull()
+}
+
+private fun formatUsd(value: Double): String {
+    return "$" + String.format(Locale.US, "%.2f", value)
+}
+
+private fun formatSignedUsd(value: Double): String {
+    val sign = if (value >= 0) "+" else "-"
+    return "$sign$" + String.format(Locale.US, "%.2f", kotlin.math.abs(value))
+}
+
+private const val PAPER_AUTO_SYNC_MS = 20_000L
+
+@Composable
 private fun ForecastHeader() {
     Row(
         modifier = Modifier
@@ -949,7 +1302,9 @@ private fun ForecastRow(
 @Composable
 private fun TraderOpportunityRow(
     opportunity: TraderOpportunity,
-    onHelpRequested: (TraderHelpTopic) -> Unit
+    isPaperTradingRefreshing: Boolean,
+    onHelpRequested: (TraderHelpTopic) -> Unit,
+    onSimulateBuyYesRequested: () -> Unit
 ) {
     val signalColor = when (opportunity.signal) {
         TraderSignalLevel.GREEN -> Positive
@@ -957,6 +1312,7 @@ private fun TraderOpportunityRow(
         TraderSignalLevel.RED -> Neutral
     }
     val actionColor = if (opportunity.shouldTrade) Positive else Neutral
+    val canSimulateBuyYes = opportunity.shouldTrade && opportunity.signal != TraderSignalLevel.RED
 
     Column(
         modifier = Modifier
@@ -1143,6 +1499,40 @@ private fun TraderOpportunityRow(
                 onHelpRequested = onHelpRequested,
                 textAlign = TextAlign.End
             )
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp)
+                .background(Color(0x1A2E7D32))
+                .border(1.dp, Color(0x552ED573))
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "SIMULACION (paper) • No envía órdenes reales",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = Color(0xFF6DF7A8)
+                )
+                Text(
+                    text = "Acción disponible: Comprar SI",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MutedInk
+                )
+            }
+            TextButton(
+                onClick = onSimulateBuyYesRequested,
+                enabled = canSimulateBuyYes && !isPaperTradingRefreshing
+            ) {
+                Text(
+                    text = if (isPaperTradingRefreshing) "Procesando..." else "Comprar SI (sim)",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = if (canSimulateBuyYes) Color(0xFF6DF7A8) else MutedInk
+                )
+            }
         }
     }
 }

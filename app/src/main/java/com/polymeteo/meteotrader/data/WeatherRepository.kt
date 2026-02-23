@@ -18,16 +18,20 @@ import com.polymeteo.meteotrader.data.model.ControlStationSnapshot
 import com.polymeteo.meteotrader.data.model.ForecastHorizonData
 import com.polymeteo.meteotrader.data.model.ForecastSourceResult
 import com.polymeteo.meteotrader.data.model.MetarSnapshot
+import com.polymeteo.meteotrader.data.model.PaperPortfolioSnapshot
 import com.polymeteo.meteotrader.data.model.PolymarketAccountSnapshot
 import com.polymeteo.meteotrader.data.model.PolyTempPremiumReport
 import com.polymeteo.meteotrader.data.model.PolymarketSnapshot
 import com.polymeteo.meteotrader.data.model.PremiumComputationSource
 import com.polymeteo.meteotrader.data.model.SourceStatus
 import com.polymeteo.meteotrader.data.model.TafSnapshot
+import com.polymeteo.meteotrader.data.model.TraderOpportunity
 import com.polymeteo.meteotrader.data.premium.PolyTempPremiumEngine
 import com.polymeteo.meteotrader.data.premium.PremiumWeightsPreferencesStore
 import com.polymeteo.meteotrader.data.premium.PolyTempPremiumStore
 import com.polymeteo.meteotrader.data.premium.PremiumWeightSnapshot
+import com.polymeteo.meteotrader.data.paper.PaperTradingEngine
+import com.polymeteo.meteotrader.data.paper.PaperTradingStore
 import com.polymeteo.meteotrader.data.source.HttpClient
 import com.polymeteo.meteotrader.data.source.LiveMarketViabilityFilter
 import com.polymeteo.meteotrader.data.source.MetarSource
@@ -62,6 +66,7 @@ class WeatherRepository(
     private val polymarketAccountSource: PolymarketAccountSource,
     private val backtestEngine: BacktestEngine? = null,
     private val premiumEngine: PolyTempPremiumEngine? = null,
+    private val paperTradingEngine: PaperTradingEngine? = null,
     val defaultPolymarketWalletAddress: String = ""
 ) {
 
@@ -89,6 +94,43 @@ class WeatherRepository(
     suspend fun loadBacktestReport(): BacktestReport {
         val engine = backtestEngine ?: return BacktestReport.empty()
         return engine.computeReport()
+    }
+
+    suspend fun loadPaperPortfolio(cities: List<CityWeatherData>): PaperPortfolioSnapshot {
+        val engine = paperTradingEngine ?: return PaperPortfolioSnapshot.empty().copy(
+            warnings = listOf("Paper trading no disponible sin contexto local")
+        )
+        return engine.loadPortfolio(cities)
+    }
+
+    suspend fun simulateBuyYes(
+        cityData: CityWeatherData,
+        opportunity: TraderOpportunity,
+        stakeUsdc: Double,
+        cities: List<CityWeatherData>
+    ): PaperPortfolioSnapshot {
+        val engine = paperTradingEngine ?: return PaperPortfolioSnapshot.empty().copy(
+            warnings = listOf("Paper trading no disponible sin contexto local")
+        )
+        return engine.placeBuyYes(
+            cityData = cityData,
+            opportunity = opportunity,
+            stakeUsdc = stakeUsdc,
+            currentCities = cities
+        )
+    }
+
+    suspend fun simulateClosePosition(
+        positionId: String,
+        cities: List<CityWeatherData>
+    ): PaperPortfolioSnapshot {
+        val engine = paperTradingEngine ?: return PaperPortfolioSnapshot.empty().copy(
+            warnings = listOf("Paper trading no disponible sin contexto local")
+        )
+        return engine.closePosition(
+            positionId = positionId,
+            currentCities = cities
+        )
     }
 
     suspend fun fetchPolymarketAccount(
@@ -552,6 +594,11 @@ class WeatherRepository(
                     noaaObservedSource = noaaObservedSource
                 )
             }
+            val paperTradingEngine = context?.let {
+                PaperTradingEngine(
+                    store = PaperTradingStore(it)
+                )
+            }
 
             val providers: List<ForecastProvider> = listOf(
                 WindyProvider(
@@ -606,6 +653,7 @@ class WeatherRepository(
                 polymarketAccountSource = polymarketAccountSource,
                 backtestEngine = backtestEngine,
                 premiumEngine = premiumEngine,
+                paperTradingEngine = paperTradingEngine,
                 defaultPolymarketWalletAddress = BuildConfig.POLYMARKET_WALLET_ADDRESS
             )
         }

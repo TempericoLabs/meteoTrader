@@ -7,6 +7,7 @@ import com.polymeteo.meteotrader.data.CityCatalog
 import com.polymeteo.meteotrader.data.WeatherRepository
 import com.polymeteo.meteotrader.data.model.BacktestReport
 import com.polymeteo.meteotrader.data.model.CityWeatherData
+import com.polymeteo.meteotrader.data.model.PaperPortfolioSnapshot
 import com.polymeteo.meteotrader.data.model.PolymarketAccountSnapshot
 import com.polymeteo.meteotrader.data.model.PolyTempPremiumReport
 import kotlinx.coroutines.CancellationException
@@ -48,6 +49,9 @@ data class MeteoUiState(
     val premiumReportsByCity: Map<String, PolyTempPremiumReport> = emptyMap(),
     val premiumRefreshingCityIds: Set<String> = emptySet(),
     val premiumErrorsByCity: Map<String, String> = emptyMap(),
+    val paperPortfolio: PaperPortfolioSnapshot = PaperPortfolioSnapshot.empty(),
+    val isPaperTradingRefreshing: Boolean = false,
+    val paperTradingErrorMessage: String? = null,
     val polymarketWalletAddress: String = "",
     val polymarketAccountSnapshot: PolymarketAccountSnapshot? = null,
     val isPolymarketAccountRefreshing: Boolean = false,
@@ -73,6 +77,7 @@ class MeteoViewModel(
     private var refreshJob: Job? = null
     private var backtestJob: Job? = null
     private var accountJob: Job? = null
+    private var paperTradingJob: Job? = null
     private var premiumWarmupJob: Job? = null
     private val cityRefreshJobs = mutableMapOf<String, Job>()
     private val premiumJobs = mutableMapOf<String, Job>()
@@ -152,6 +157,7 @@ class MeteoViewModel(
             if (loadedCities.isNotEmpty()) {
                 launchBacktestRefresh(loadedCities)
                 launchPremiumWarmup(loadedCities)
+                refreshPaperTrading(loadedCities)
             }
         }
     }
@@ -169,6 +175,7 @@ class MeteoViewModel(
                     if (cityData == null) return@onSuccess
                     val updated = applyCityUpdate(cityData)
                     launchBacktestRefresh(updated)
+                    refreshPaperTrading(updated)
                 }.onFailure { throwable ->
                     _uiState.update { current ->
                         current.copy(
@@ -190,6 +197,103 @@ class MeteoViewModel(
             return
         }
         launchBacktestRefresh(cities)
+    }
+
+    fun refreshPaperTrading() {
+        refreshPaperTrading(_uiState.value.cities)
+    }
+
+    fun simulateBuyYes(
+        cityId: String,
+        marketId: String,
+        stakeUsdc: Double
+    ) {
+        val cities = _uiState.value.cities
+        val cityData = cities.firstOrNull { city -> city.city.id == cityId }
+        val opportunity = cityData?.polymarket?.opportunities?.firstOrNull { it.marketId == marketId }
+        if (cityData == null || opportunity == null) {
+            _uiState.update { current ->
+                current.copy(
+                    paperTradingErrorMessage = "No se encontró el mercado para simular la compra YES"
+                )
+            }
+            return
+        }
+
+        paperTradingJob?.cancel()
+        paperTradingJob = viewModelScope.launch {
+            _uiState.update { current ->
+                current.copy(
+                    isPaperTradingRefreshing = true,
+                    paperTradingErrorMessage = null
+                )
+            }
+            runCatching {
+                withContext(Dispatchers.Default) {
+                    repository.simulateBuyYes(
+                        cityData = cityData,
+                        opportunity = opportunity,
+                        stakeUsdc = stakeUsdc,
+                        cities = _uiState.value.cities
+                    )
+                }
+            }.onSuccess { snapshot ->
+                _uiState.update { current ->
+                    current.copy(
+                        paperPortfolio = snapshot,
+                        isPaperTradingRefreshing = false,
+                        paperTradingErrorMessage = null
+                    )
+                }
+            }.onFailure { throwable ->
+                if (throwable is CancellationException) return@onFailure
+                _uiState.update { current ->
+                    current.copy(
+                        isPaperTradingRefreshing = false,
+                        paperTradingErrorMessage = throwable.message
+                            ?: "No se pudo registrar la compra simulada"
+                    )
+                }
+            }
+        }
+    }
+
+    fun simulateClosePosition(positionId: String) {
+        if (positionId.isBlank()) return
+        paperTradingJob?.cancel()
+        paperTradingJob = viewModelScope.launch {
+            _uiState.update { current ->
+                current.copy(
+                    isPaperTradingRefreshing = true,
+                    paperTradingErrorMessage = null
+                )
+            }
+            runCatching {
+                withContext(Dispatchers.Default) {
+                    repository.simulateClosePosition(
+                        positionId = positionId,
+                        cities = _uiState.value.cities
+                    )
+                }
+            }.onSuccess { snapshot ->
+                _uiState.update { current ->
+                    current.copy(
+                        paperPortfolio = snapshot,
+                        isPaperTradingRefreshing = false,
+                        paperTradingErrorMessage = null
+                    )
+                }
+            }.onFailure { throwable ->
+                if (throwable is CancellationException) return@onFailure
+                _uiState.update { current ->
+                    current.copy(
+                        isPaperTradingRefreshing = false,
+                        paperTradingErrorMessage = throwable.message
+                            ?: "No se pudo cerrar la posición simulada"
+                    )
+                }
+            }
+        }
     }
 
     fun refreshPolymarketAccount(force: Boolean = true) {
@@ -433,6 +537,40 @@ class MeteoViewModel(
         if (_uiState.value.strategyMode == mode) return
         _uiState.value = _uiState.value.copy(strategyMode = mode)
         preferencesStore.saveStrategyMode(mode)
+    }
+
+    private fun refreshPaperTrading(cities: List<CityWeatherData>) {
+        paperTradingJob?.cancel()
+        paperTradingJob = viewModelScope.launch {
+            _uiState.update { current ->
+                current.copy(
+                    isPaperTradingRefreshing = true,
+                    paperTradingErrorMessage = null
+                )
+            }
+            runCatching {
+                withContext(Dispatchers.Default) {
+                    repository.loadPaperPortfolio(cities)
+                }
+            }.onSuccess { snapshot ->
+                _uiState.update { current ->
+                    current.copy(
+                        paperPortfolio = snapshot,
+                        isPaperTradingRefreshing = false,
+                        paperTradingErrorMessage = null
+                    )
+                }
+            }.onFailure { throwable ->
+                if (throwable is CancellationException) return@onFailure
+                _uiState.update { current ->
+                    current.copy(
+                        isPaperTradingRefreshing = false,
+                        paperTradingErrorMessage = throwable.message
+                            ?: "No se pudo actualizar paper trading"
+                    )
+                }
+            }
+        }
     }
 }
 
