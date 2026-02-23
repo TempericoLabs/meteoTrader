@@ -645,8 +645,9 @@ private fun rookieReasonSummary(opportunity: TraderOpportunity): String {
     val costText = formatPercent(opportunity.totalCost)
     val edgeText = formatPercent(opportunity.executableEdge)
     val liquidityText = (opportunity.liquidity ?: 0.0).roundToInt()
+    val volumeBucketText = opportunity.volumeBucket?.roundToInt()?.toString() ?: "--"
     val spreadText = formatPercent(opportunity.spread ?: 0.0)
-    return "Por qué interesa: ventaja real ${edgeText}, ejecución probable ${fillText}, liquidez ${liquidityText} y coste ${costText} (spread ${spreadText})."
+    return "Por qué interesa: ventaja real ${edgeText}, ejecución probable ${fillText}, liquidez libro ${liquidityText}, volumen bucket ${volumeBucketText} y coste ${costText} (spread ${spreadText})."
 }
 
 private fun rookieProfitSummary(

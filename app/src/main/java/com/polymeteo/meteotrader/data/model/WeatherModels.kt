@@ -142,7 +142,8 @@ data class TraderOpportunity(
     val signal: TraderSignalLevel,
     val liquidity: Double?,
     val volume24h: Double?,
-    val spread: Double?
+    val spread: Double?,
+    val volumeBucket: Double? = null
 )
 
 data class DecisionTraceEntry(

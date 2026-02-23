@@ -297,7 +297,7 @@
     <section id="indice" class="box toc">
       <h2>Índice</h2>
       <ol>
-        <li><a href="#novedades-v24">Novedades desde la versión anterior (v2.4)</a></li>
+        <li><a href="#novedades-v24">Novedades desde la versión anterior (v2.5)</a></li>
         <li><a href="#capitulo-0">Capítulo 0: Basics de mercados de predicción</a></li>
         <li><a href="#capitulo-1">Capítulo 1: Qué es Polymarket y por qué esta app es clave</a></li>
         <li><a href="#capitulo-2">Capítulo 2: Flujo general de uso (de principiante a operativo)</a></li>
@@ -315,11 +315,12 @@
     </section>
 
     <section id="novedades-v24">
-      <h2>Novedades desde la versión anterior (v2.4)</h2>
+      <h2>Novedades desde la versión anterior (v2.5)</h2>
       <div class="box">
         <h3>Cambios visibles para el usuario</h3>
         <ul>
           <li><strong>Modo Rookie global:</strong> la app simplifica la comunicación en <strong>DETALLE</strong>, <strong>MMA</strong>, <strong>Paper Trading</strong> y <strong>Cuenta</strong> (mismos cálculos, menos tecnicismos visibles).</li>
+          <li><strong>Rookie (métricas aclaradas):</strong> la tarjeta muestra <strong>liquidez libro</strong> (depth) y <strong>volumen bucket</strong> (similar al <code>Vol.</code> de Polymarket) por separado.</li>
           <li><strong>DETALLE (Rookie):</strong> se resumen pronósticos, motivos de descarte y mercados con lenguaje directo (ventaja real, dificultad de ejecución, coste, apuesta posible/esperar).</li>
           <li><strong>MMA (Rookie):</strong> se muestra resumen de aprendizaje y ranking de modelos en formato corto (modelo dominante, peso, error y cobertura) sin tabla extensa.</li>
           <li><strong>Paper Trading (Rookie):</strong> resumen compacto para entender rápidamente si la simulación va bien o mal (resultado, fill, ejecución real vs esperada).</li>
@@ -650,6 +651,15 @@
               <tr><td><code>BET / PASS</code></td><td>Apta / no apta según el motor.</td><td><code>PASS</code> no significa “mercado cerrado”, significa “no merece entrada ahora”.</td></tr>
             </tbody>
           </table>
+        </div>
+
+        <div class="box-alt">
+          <h3>Importante: “liquidez libro” y “Vol.” no son lo mismo</h3>
+          <ul>
+            <li><strong>Liquidez libro</strong>: profundidad del order book del bucket (facilidad de ejecución).</li>
+            <li><strong>Volumen bucket</strong>: dinero negociado en ese bucket (en Polymarket suele verse como <code>Vol.</code> en la fila).</li>
+            <li>La app usa ambas métricas, pero en Rookie se muestran separadas para evitar confusión.</li>
+          </ul>
         </div>
 
         <div class="box-alt">
@@ -1068,7 +1078,7 @@
     </section>
 
     <p class="version">
-      Manual v2.4 • Última actualización: 23-02-2026 • Feedback: <a href="mailto:digitalclaw8@gmail.com" style="color:#8fc8ff">digitalclaw8@gmail.com</a>
+      Manual v2.5 • Última actualización: 23-02-2026 • Feedback: <a href="mailto:digitalclaw8@gmail.com" style="color:#8fc8ff">digitalclaw8@gmail.com</a>
     </p>
   </div>
 </body>

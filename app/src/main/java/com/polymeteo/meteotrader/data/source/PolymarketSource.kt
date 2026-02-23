@@ -415,6 +415,7 @@ class PolymarketSource(
             bestBid = bestBid,
             bestAsk = bestAsk,
             liquidity = obj.doubleOrNull("liquidityNum") ?: obj.doubleOrNull("liquidity"),
+            volumeBucket = obj.doubleOrNull("volume"),
             volume24h = obj.doubleOrNull("volume24hr") ?: obj.doubleOrNull("volume24hrClob"),
             spread = inferredSpread
         )
@@ -541,7 +542,8 @@ class PolymarketSource(
             signal = signal,
             liquidity = market.liquidity,
             volume24h = market.volume24h,
-            spread = market.spread
+            spread = market.spread,
+            volumeBucket = market.volumeBucket
         )
     }
 
@@ -880,6 +882,7 @@ class PolymarketSource(
         val bestBid: Double?,
         val bestAsk: Double?,
         val liquidity: Double?,
+        val volumeBucket: Double?,
         val volume24h: Double?,
         val spread: Double?
     )
