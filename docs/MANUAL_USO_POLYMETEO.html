@@ -297,7 +297,7 @@
     <section id="indice" class="box toc">
       <h2>Índice</h2>
       <ol>
-        <li><a href="#novedades-v24">Novedades desde la versión anterior (v2.7)</a></li>
+        <li><a href="#novedades-v24">Novedades desde la versión anterior (v2.8)</a></li>
         <li><a href="#capitulo-0">Capítulo 0: Basics de mercados de predicción</a></li>
         <li><a href="#capitulo-1">Capítulo 1: Qué es Polymarket y por qué esta app es clave</a></li>
         <li><a href="#capitulo-2">Capítulo 2: Flujo general de uso (de principiante a operativo)</a></li>
@@ -315,7 +315,7 @@
     </section>
 
     <section id="novedades-v24">
-      <h2>Novedades desde la versión anterior (v2.7)</h2>
+      <h2>Novedades desde la versión anterior (v2.8)</h2>
       <div class="box">
         <h3>Cambios visibles para el usuario</h3>
         <ul>
@@ -324,6 +324,9 @@
           <li><strong>Nueva pantalla interna “Intel usuario Polymarket”:</strong> permite introducir un <code>@usuario</code>, resolver su <strong>proxy wallet</strong> pública y consultar actividad/trades/posiciones públicos con <strong>insights operativos</strong> (solo informativo, sin alterar cálculos de la app).</li>
           <li><strong>CopyTrade (monitor de actividad pública):</strong> en la pantalla Intel se puede activar un monitor <strong>en tiempo real práctico (polling rápido)</strong> con filtros por compra/venta, importe mínimo y tipo de mercado. Genera alertas foreground dentro de la app y registro de alertas recientes.</li>
           <li><strong>CopyTrade (latencia):</strong> la velocidad depende de <strong>indexado de la API de Polymarket + intervalo de polling configurado</strong>. La app intenta minimizar el delay con sondeo corto configurable (2s-15s).</li>
+          <li><strong>CopyTrade (notificaciones Android):</strong> se añade <strong>notificación local</strong> de sistema por cada alerta nueva (si el permiso <code>POST_NOTIFICATIONS</code> está concedido).</li>
+          <li><strong>CopyTrade (background):</strong> se añade <strong>Foreground Service</strong> para mantener el monitor activo cuando la app queda en segundo plano (mientras Android mantenga el servicio en ejecución).</li>
+          <li><strong>Permisos:</strong> la app solicita <code>POST_NOTIFICATIONS</code> (Android 13+) para poder mostrar alertas del sistema de CopyTrade.</li>
           <li><strong>DETALLE (Rookie):</strong> se resumen pronósticos, motivos de descarte y mercados con lenguaje directo (ventaja real, dificultad de ejecución, coste, apuesta posible/esperar).</li>
           <li><strong>MMA (Rookie):</strong> se muestra resumen de aprendizaje y ranking de modelos en formato corto (modelo dominante, peso, error y cobertura) sin tabla extensa.</li>
           <li><strong>Paper Trading (Rookie):</strong> resumen compacto para entender rápidamente si la simulación va bien o mal (resultado, fill, ejecución real vs esperada).</li>
@@ -1081,7 +1084,7 @@
     </section>
 
     <p class="version">
-      Manual v2.7 • Última actualización: 23-02-2026 • Feedback: <a href="mailto:digitalclaw8@gmail.com" style="color:#8fc8ff">digitalclaw8@gmail.com</a>
+      Manual v2.8 • Última actualización: 23-02-2026 • Feedback: <a href="mailto:digitalclaw8@gmail.com" style="color:#8fc8ff">digitalclaw8@gmail.com</a>
     </p>
   </div>
 </body>

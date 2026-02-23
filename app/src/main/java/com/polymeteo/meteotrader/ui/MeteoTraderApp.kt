@@ -1,5 +1,7 @@
 package com.polymeteo.meteotrader.ui
 
+import android.content.Context
+import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -56,9 +59,31 @@ private object Routes {
 fun MeteoTraderApp(
     viewModelFactory: MeteoViewModelFactory
 ) {
+    val context = LocalContext.current
     val navController = rememberNavController()
     val viewModel: MeteoViewModel = viewModel(factory = viewModelFactory)
     val uiState by viewModel.uiState.collectAsState()
+
+    LaunchedEffect(
+        uiState.copyTradeMonitor.config.enabled,
+        uiState.copyTradeMonitor.config.proxyWallet,
+        uiState.copyTradeMonitor.config.username
+    ) {
+        val config = uiState.copyTradeMonitor.config
+        if (config.enabled && config.proxyWallet.isNotBlank()) {
+            val intent = com.polymeteo.meteotrader.copytrade.CopyTradeMonitorService
+                .startIntent(context, rebaseline = false)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        } else {
+            context.startService(
+                com.polymeteo.meteotrader.copytrade.CopyTradeMonitorService.stopIntent(context)
+            )
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         NavHost(
