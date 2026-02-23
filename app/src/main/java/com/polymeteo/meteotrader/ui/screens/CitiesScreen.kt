@@ -52,9 +52,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.polymeteo.meteotrader.data.CityCatalog
 import com.polymeteo.meteotrader.data.forecast.ForecastWeights
@@ -111,7 +114,7 @@ fun CitiesScreen(
             .background(DarkBase)
     ) {
         val topEdges = state.cities
-            .mapNotNull { city -> city.polymarket.topOpportunity?.let { city.city.name to it } }
+            .mapNotNull { city -> city.polymarket.topOpportunity?.let { city to it } }
             .sortedByDescending { (_, opp) -> opp.executableEdge }
         val flashCandidate = topEdges.firstOrNull { (_, opp) -> isFlashOpportunity(opp) }
 
@@ -725,6 +728,7 @@ private fun CityCard(
         else -> MaterialTheme.colorScheme.onSurface
     }
     val topTrader = data?.polymarket?.topOpportunity
+    val horizonAvailabilityTag = data?.let { cityOpportunityHorizonTag(it) }
 
     val deltaColor = when {
         delta == null -> Neutral
@@ -746,7 +750,20 @@ private fun CityCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = city.name,
+                text = buildAnnotatedString {
+                    append(city.name)
+                    if (!horizonAvailabilityTag.isNullOrBlank()) {
+                        append(" ")
+                        withStyle(
+                            SpanStyle(
+                                fontSize = MaterialTheme.typography.labelSmall.fontSize,
+                                fontWeight = FontWeight.Medium
+                            )
+                        ) {
+                            append(horizonAvailabilityTag)
+                        }
+                    }
+                },
                 style = MaterialTheme.typography.titleMedium,
                 color = primaryTextColor,
                 maxLines = 1,
@@ -935,8 +952,8 @@ private fun formatCompactDelta(value: Double?, unit: TempUnit): String {
 @Composable
 private fun TopEdgesTicker(
     cities: List<CityWeatherData>,
-    edges: List<Pair<String, TraderOpportunity>>,
-    flashOpportunity: Pair<String, TraderOpportunity>?,
+    edges: List<Pair<CityWeatherData, TraderOpportunity>>,
+    flashOpportunity: Pair<CityWeatherData, TraderOpportunity>?,
     flashActive: Boolean
 ) {
     val flashTransition = rememberInfiniteTransition(label = "flashTicker")
@@ -954,8 +971,8 @@ private fun TopEdgesTicker(
         val messages = mutableListOf<String>()
 
         if (flashActive && flashOpportunity != null) {
-            val (city, opp) = flashOpportunity
-            messages += "FLASH $city ${directionLabel(opp.direction)} ${opp.recommendedBuy} ${formatPercent(opp.executableEdge)}"
+            val (cityData, opp) = flashOpportunity
+            messages += "FLASH ${tickerCityLabel(cityData, opp)} ${directionLabel(opp.direction)} ${opp.recommendedBuy} ${formatPercent(opp.executableEdge)}"
         }
 
         if (edges.isEmpty()) {
@@ -964,8 +981,8 @@ private fun TopEdgesTicker(
             val executableCount = edges.count { (_, opp) -> opp.shouldTrade }
             messages += "Ejecutables $executableCount/${edges.size}"
 
-            edges.take(4).forEachIndexed { index, (city, opp) ->
-                messages += "${index + 1} $city ${directionLabel(opp.direction)} ${if (opp.shouldTrade) "BET" else "PASS"} ${opp.recommendedBuy} ${formatPercent(opp.executableEdge)}"
+            edges.take(4).forEachIndexed { index, (cityData, opp) ->
+                messages += "${index + 1} ${tickerCityLabel(cityData, opp)} ${directionLabel(opp.direction)} ${if (opp.shouldTrade) "BET" else "PASS"} ${opp.recommendedBuy} ${formatPercent(opp.executableEdge)}"
             }
         }
 
@@ -1037,6 +1054,54 @@ private fun isFlashOpportunity(opportunity: TraderOpportunity): Boolean {
         opportunity.signal == TraderSignalLevel.GREEN &&
         opportunity.executableEdge >= FLASH_MIN_EXECUTABLE_EDGE &&
         liquidity >= FLASH_MIN_LIQUIDITY
+}
+
+private fun tickerCityLabel(
+    cityData: CityWeatherData,
+    opportunity: TraderOpportunity
+): String {
+    val horizon = opportunityHorizonLabel(cityData, opportunity) ?: return cityData.city.name
+    return "${cityData.city.name} ($horizon)"
+}
+
+private fun cityOpportunityHorizonTag(cityData: CityWeatherData): String? {
+    if (cityData.polymarket.opportunities.isEmpty()) return null
+    val cityToday = LocalDate.now(ZoneId.of(cityData.city.zoneId))
+    var hasToday = false
+    var hasTomorrow = false
+    var hasPast = false
+    cityData.polymarket.opportunities.forEach { opportunity ->
+        val targetDate = opportunity.condition.targetDate ?: cityToday
+        when (targetDate) {
+            cityToday -> hasToday = true
+            cityToday.plusDays(1) -> hasTomorrow = true
+            cityToday.plusDays(2) -> hasPast = true
+        }
+    }
+    val label = buildString {
+        if (hasToday) append("H")
+        if (hasTomorrow) append("M")
+        if (hasPast) append("P")
+    }
+    return when {
+        label.isBlank() -> null
+        label == "H" -> null
+        else -> "[$label]"
+    }
+}
+
+private fun opportunityHorizonLabel(
+    cityData: CityWeatherData,
+    opportunity: TraderOpportunity
+): String? {
+    val cityToday = LocalDate.now(ZoneId.of(cityData.city.zoneId))
+    val targetDate = opportunity.condition.targetDate ?: cityToday
+    return when (targetDate) {
+        cityToday -> null
+        cityToday.plusDays(1) -> "Mañana"
+        cityToday.plusDays(2) -> "Pasado"
+        else -> targetDate.format(DateTimeFormatter.ofPattern("dd/MM", Locale.US))
+    }
 }
 
 private const val FLASH_DURATION_MILLIS = 60_000L

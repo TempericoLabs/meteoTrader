@@ -83,6 +83,7 @@ import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -795,8 +796,9 @@ private fun TraderHeader(
 
         cityData.polymarket.topOpportunity?.let { topToday ->
             if (selectedTopOpportunity?.marketId != topToday.marketId) {
+                val referenceHorizon = detailOpportunityDayLabel(cityData, topToday)
                 Text(
-                    text = "Referencia hoy: ${directionLabel(topToday.direction)} • ${topToday.recommendedBuy} ${formatPercent(topToday.executableEdge)} • ${if (topToday.shouldTrade) "BET" else "PASS"}",
+                    text = "Referencia ${referenceHorizon.lowercase()}: ${directionLabel(topToday.direction)} • ${topToday.recommendedBuy} ${formatPercent(topToday.executableEdge)} • ${if (topToday.shouldTrade) "BET" else "PASS"}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MutedInk,
                     modifier = Modifier.padding(top = 4.dp)
@@ -813,6 +815,20 @@ private fun TraderHeader(
         )
 
         TraderHelpTerms(onHelpRequested = onHelpRequested)
+    }
+}
+
+private fun detailOpportunityDayLabel(
+    cityData: CityWeatherData,
+    opportunity: TraderOpportunity
+): String {
+    val cityToday = LocalDate.now(ZoneId.of(cityData.city.zoneId))
+    val targetDate = opportunity.condition.targetDate ?: cityToday
+    return when (targetDate) {
+        cityToday -> "Hoy"
+        cityToday.plusDays(1) -> "Mañana"
+        cityToday.plusDays(2) -> "Pasado"
+        else -> targetDate.format(DateTimeFormatter.ofPattern("dd/MM", Locale.US))
     }
 }
 

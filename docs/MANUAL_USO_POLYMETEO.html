@@ -297,7 +297,7 @@
     <section id="indice" class="box toc">
       <h2>Índice</h2>
       <ol>
-        <li><a href="#novedades-v22">Novedades desde la versión anterior (v2.2)</a></li>
+        <li><a href="#novedades-v23">Novedades desde la versión anterior (v2.3)</a></li>
         <li><a href="#capitulo-0">Capítulo 0: Basics de mercados de predicción</a></li>
         <li><a href="#capitulo-1">Capítulo 1: Qué es Polymarket y por qué esta app es clave</a></li>
         <li><a href="#capitulo-2">Capítulo 2: Flujo general de uso (de principiante a operativo)</a></li>
@@ -314,14 +314,17 @@
       </ol>
     </section>
 
-    <section id="novedades-v22">
-      <h2>Novedades desde la versión anterior (v2.2)</h2>
+    <section id="novedades-v23">
+      <h2>Novedades desde la versión anterior (v2.3)</h2>
       <div class="box">
         <h3>Cambios visibles para el usuario</h3>
         <ul>
           <li><strong>CIUDADES:</strong> el bloque fijo de <code>Top Ejecutables</code> ahora es un <strong>ticker horizontal dinámico</strong> (estilo cotizaciones) con información útil en tiempo real.</li>
+          <li><strong>CIUDADES:</strong> cada ciudad puede mostrar una etiqueta de horizonte <code>[M]</code>, <code>[P]</code>, <code>[MP]</code>, <code>[HM]</code>, <code>[HP]</code> o <code>[HMP]</code> junto al nombre para indicar en qué días hay oportunidades (Hoy/Mañana/Pasado).</li>
+          <li><strong>Ticker/FLASH:</strong> cuando la oportunidad destacada es de <strong>Mañana</strong> o <strong>Pasado</strong>, ahora se etiqueta explícitamente tras el nombre de la ciudad (ej. <code>New York (Mañana)</code>).</li>
           <li><strong>Alerta FLASH:</strong> si aparece una oportunidad fuerte y ejecutable, se muestra <code>FLASH</code> en rojo parpadeante durante 1 minuto para priorizar revisión inmediata.</li>
           <li><strong>DETALLE:</strong> <code>Media Modelos Ajustada (MMA)</code> muestra valor numérico (no solo enlace) y abre su dashboard al pulsar en etiqueta o valor.</li>
+          <li><strong>DETALLE:</strong> la referencia superior de Trader Mode ahora indica el horizonte correcto (<code>Hoy/Mañana/Pasado</code>) para evitar confusiones cuando no hay oportunidades en Hoy.</li>
           <li><strong>DETALLE:</strong> se mantiene la mejora de lectura de <code>METAR actual</code> con fecha/hora y <code>METAR anterior</code> con <code>(Hace X horas)</code>.</li>
           <li><strong>DETALLE:</strong> temperaturas clave muestran unidad principal + conversión entre paréntesis para evitar errores de interpretación.</li>
           <li><strong>DETALLE:</strong> se integra bloque operacional <code>TAF</code> con resumen, vigencia e incidencias relevantes.</li>
@@ -502,10 +505,12 @@
             <tr><td><code>Actualizado</code></td><td>Hora de último refresh global.</td><td>Evita decidir con datos viejos.</td><td>Si está desactualizado, refresca.</td></tr>
             <tr><td><code>Ticker dinámico</code></td><td>Línea móvil con oportunidades y estado global (ejecutables, tops, alertas y errores).</td><td>Reduce ruido sin perder contexto.</td><td>Lee primero el ticker para priorizar en qué ciudad entrar a DETALLE.</td></tr>
             <tr><td><code>FLASH</code></td><td>Etiqueta roja parpadeante durante 1 minuto cuando hay oportunidad fuerte y ejecutable.</td><td>Sirve de alerta temprana para no llegar tarde.</td><td>No entres por impulso: úsalo para abrir DETALLE y validar costes/fill.</td></tr>
+            <tr><td><code>(Mañana)</code> / <code>(Pasado)</code> en ticker</td><td>Etiqueta de horizonte de la oportunidad mostrada en ticker/FLASH.</td><td>Evita confundir una oportunidad futura con una de hoy.</td><td>Si no pone nada tras la ciudad, la oportunidad es de <strong>Hoy</strong>.</td></tr>
             <tr><td><code>M</code></td><td>METAR actual.</td><td>Pulso real y oficial del aeropuerto.</td><td>Compáralo con Media Modelos (MM) y estación.</td></tr>
             <tr><td><code>Δ</code></td><td>Cambio vs METAR anterior.</td><td>Momentum térmico inmediato.</td><td>Delta alta puede invalidar tesis vieja.</td></tr>
             <tr><td><code>S</code></td><td>Estación control (Wunderground).</td><td>Dato de referencia para validación.</td><td>Si S y M divergen mucho, cautela.</td></tr>
             <tr><td><code>P</code></td><td>Media Modelos (MM) (consenso modelos).</td><td>Visión agregada más robusta.</td><td>Base para trader mode.</td></tr>
+            <tr><td><code>[M]</code>, <code>[P]</code>, <code>[MP]</code>, <code>[HMP]</code></td><td>Horizontes con oportunidades en esa ciudad: Hoy (H), Mañana (M), Pasado (P).</td><td>Te dice si el chip visible del grid puede referirse a otro día distinto de Hoy.</td><td>Si solo hay Hoy, no se muestra etiqueta (comportamiento normal).</td></tr>
             <tr><td>Chip trader</td><td>Dirección + BET/PASS + lado + edge ejecutable.</td><td>Resume oportunidad real.</td><td>BET no significa “obligatorio”; valida detalle.</td></tr>
           </tbody>
         </table>
@@ -514,14 +519,31 @@
       <div class="box-alt">
         <h3>Cómo leer el ticker (ejemplo rápido)</h3>
         <p>
-          Ejemplo: <code>FLASH London UNDER NO 57.5% • Ejecutables 5/14 • 1 Seoul OVER BET YES 22.4% • Fuentes con error: 2</code>
+          Ejemplo: <code>FLASH London (Mañana) UNDER NO 57.5% • Ejecutables 5/14 • 1 Seoul OVER BET YES 22.4% • 2 New York (Pasado) RANGE BET YES 18.1% • Fuentes con error: 2</code>
         </p>
         <ul>
           <li><code>FLASH ...</code>: prioridad alta de revisión inmediata.</li>
+          <li><code>(Mañana)</code> / <code>(Pasado)</code> tras la ciudad: la oportunidad destacada no es de hoy.</li>
           <li><code>Ejecutables 5/14</code>: cuántas ciudades tienen top opportunity operable ahora.</li>
           <li><code>1 Seoul ...</code>: ranking de las mejores oportunidades del momento.</li>
           <li><code>Fuentes con error: 2</code>: calidad de datos; si sube, aumenta prudencia.</li>
         </ul>
+      </div>
+
+      <div class="box-alt">
+        <h3>Cómo leer las etiquetas de horizonte en el nombre de la ciudad (grid)</h3>
+        <table>
+          <thead>
+            <tr><th>Etiqueta</th><th>Significado</th><th>Lectura práctica</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>(sin etiqueta)</td><td>Solo hay oportunidad en <strong>Hoy</strong> (o no hay oportunidades futuras seleccionadas).</td><td>El chip visible del grid se interpreta como horizonte actual.</td></tr>
+            <tr><td><code>[M]</code></td><td>Hay oportunidades en <strong>Mañana</strong>.</td><td>Si el chip del grid parece raro respecto a Hoy, entra en DETALLE y revisa la pestaña Mañana.</td></tr>
+            <tr><td><code>[P]</code></td><td>Hay oportunidades en <strong>Pasado</strong> (pasado mañana).</td><td>Señal de valor futuro; no confundir con operativa de hoy.</td></tr>
+            <tr><td><code>[MP]</code></td><td>Hay oportunidades en <strong>Mañana</strong> y <strong>Pasado</strong>.</td><td>Muy útil cuando Hoy está filtrado pero el motor sí ve valor en horizontes futuros.</td></tr>
+            <tr><td><code>[HM]</code>, <code>[HP]</code>, <code>[HMP]</code></td><td>Combinaciones de oportunidades en varios horizontes.</td><td>La ciudad tiene valor en más de un día; usa las pestañas para separar análisis.</td></tr>
+          </tbody>
+        </table>
       </div>
     </section>
 
@@ -588,6 +610,152 @@
           <li><code>BET/PASS</code>: decisión final operable del motor.</li>
           <li><code>Exec</code> + <code>Bruto</code> + <code>Costes</code> + <code>Fill</code>: filtro de ejecución real.</li>
         </ol>
+      </div>
+
+      <div class="box">
+        <h3>Por qué un mercado puede estar ACTIVO en Polymarket pero NO aparecer en la app</h3>
+        <p>
+          Esto es normal y está hecho a propósito. <strong>Polymarket muestra mercados activos</strong>, pero la app solo muestra
+          mercados que pasan filtros de calidad y ejecución. Es decir: la app no pregunta “¿está abierto?” sino
+          <strong>“¿tiene sentido entrar ahora?”</strong>.
+        </p>
+
+        <div class="box-alt">
+          <h3>Checklist rápido (en orden)</h3>
+          <ol>
+            <li><strong>¿La ciudad está cerrada por horario?</strong> Si la hora local de la ciudad es <code>18:00</code> o más, la app marca <code>CERRADO POR HORARIO</code>.</li>
+            <li><strong>¿El bucket sigue siendo posible?</strong> Si ya se observó una máxima que lo invalida (usando truncado de Polymarket), se elimina.</li>
+            <li><strong>¿Hay MM/MMA disponibles?</strong> Sin una referencia meteorológica válida, no se calcula la oportunidad.</li>
+            <li><strong>¿Pasa filtros de ejecución?</strong> Liquidez, volumen, spread, costes, fill y edge ejecutable.</li>
+            <li><strong>¿Pasa la estrategia elegida?</strong> Conservadora o Agresiva (modo Rookie), que añaden filtros extra.</li>
+          </ol>
+        </div>
+
+        <div class="box-alt">
+          <h3>Traducción de términos técnicos (en lenguaje normal)</h3>
+          <table>
+            <thead>
+              <tr><th>Término</th><th>Qué significa “en la calle”</th><th>Qué te dice</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>Bruto</code></td><td>Ventaja teórica antes de pagar peajes.</td><td>Si ya es bajo aquí, mala señal de partida.</td></tr>
+              <tr><td><code>Costes</code></td><td>Peajes de operar (fee + spread + liquidez).</td><td>Cuánto se te “come” el mercado por entrar/salir.</td></tr>
+              <tr><td><code>Fill</code></td><td>Probabilidad de que te ejecuten bien.</td><td>Si es bajo, puedes quedarte sin entrar o entrar peor.</td></tr>
+              <tr><td><code>Exec</code></td><td>Ventaja real final (la importante).</td><td>Es la que decide si hay BET o PASS.</td></tr>
+              <tr><td><code>BET / PASS</code></td><td>Apta / no apta según el motor.</td><td><code>PASS</code> no significa “mercado cerrado”, significa “no merece entrada ahora”.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="box-alt">
+          <h3>Cómo calcular el spread de forma sencilla (sin API)</h3>
+          <p>
+            Si Polymarket muestra solo los botones <code>Comprar Sí</code> y <code>Comprar No</code>, puedes estimar el spread así:
+          </p>
+          <ul>
+            <li><code>spread ≈ precio Comprar Sí + precio Comprar No - 1</code></li>
+            <li>Ejemplo: <code>51c</code> y <code>58c</code> → <code>0.51 + 0.58 - 1 = 0.09</code> → <strong>spread 9c</strong>.</li>
+          </ul>
+          <p>
+            <strong>Importante:</strong> el texto verde pequeño tipo <code>Sí 2.4 · 42c</code> o <code>Sí 9.8 · 51c</code> es tu
+            <strong>posición</strong> (beneficio potencial + precio medio comprado), <strong>no</strong> son precios de libro
+            (bid/ask) del mercado.
+          </p>
+        </div>
+
+        <div class="box-alt">
+          <h3>Ejemplo real (París, mismo día, mercado activo pero filtrado o no)</h3>
+          <table>
+            <thead>
+              <tr><th>Bucket</th><th>Comprar Sí</th><th>Comprar No</th><th>Spread aprox.</th><th>Resultado típico en la app</th><th>Por qué</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>14°C</code></td>
+                <td><code>51c</code></td>
+                <td><code>58c</code></td>
+                <td><code>9c</code></td>
+                <td>Puede salir o no según <code>Exec/Fill/Costes</code></td>
+                <td>No cae por spread duro (9c &lt;= 12c), pero puede caer por edge ejecutable/fill.</td>
+              </tr>
+              <tr>
+                <td><code>15°C</code></td>
+                <td><code>51c</code></td>
+                <td><code>58c</code></td>
+                <td><code>9c</code></td>
+                <td>Igual que 14°C: depende de ejecución real</td>
+                <td>Pasa spread duro, pero si <code>Exec</code> es bajo o <code>Fill</code> cae, se marca <code>PASS</code>.</td>
+              </tr>
+              <tr>
+                <td><code>16°C</code></td>
+                <td><code>18.9c</code></td>
+                <td><code>97.4c</code></td>
+                <td><code>16.3c</code></td>
+                <td>Normalmente no aparece</td>
+                <td>Cae por <strong>spread demasiado alto</strong> (16.3c &gt; 12c, filtro duro).</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="box">
+        <h3>Límites actuales de decisión (importante)</h3>
+        <p>
+          Hay <strong>dos capas de límites</strong>:
+          <strong>(1) filtros duros del motor</strong> y <strong>(2) filtros de estrategia</strong> (Conservadora/Agresiva, sobre todo en modo Rookie).
+          Primero deben pasar los filtros duros. Después, la estrategia puede endurecer aún más la selección.
+        </p>
+
+        <div class="box-alt">
+          <h3>1) Filtros duros del motor (siempre activos)</h3>
+          <table>
+            <thead>
+              <tr><th>Regla</th><th>Límite actual</th><th>Qué significa en lenguaje simple</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Horario de ciudad</td><td><code>&gt;= 18:00</code> local</td><td>La ciudad se cierra en la app aunque Polymarket siga activo.</td></tr>
+              <tr><td>Señal base (<code>shouldTrade</code>)</td><td><code>Exec &gt;= 2.0%</code> y <code>Fill &gt;= 50%</code></td><td>Primera criba: si no pasa, ni se considera operable.</td></tr>
+              <tr><td>Liquidez mínima</td><td><code>250</code></td><td>Evita libros demasiado vacíos.</td></tr>
+              <tr><td>Volumen 24h mínimo</td><td><code>200</code></td><td>Evita mercados sin actividad real.</td></tr>
+              <tr><td>Spread máximo</td><td><code>12c</code> (<code>0.12</code>)</td><td>Si el peaje de entrada es muy alto, se descarta.</td></tr>
+              <tr><td>Costes totales máximos</td><td><code>22%</code></td><td>Si fee+spread+liquidez comen demasiado, fuera.</td></tr>
+              <tr><td>Fill mínimo (control ejecución)</td><td><code>55%</code></td><td>Aunque el edge sea bueno, si es difícil ejecutar, se descarta.</td></tr>
+              <tr><td>Edge ejecutable mínimo (hoy, antes de 15:00)</td><td><code>2.5%</code></td><td>Ventaja mínima real para que merezca la pena.</td></tr>
+              <tr><td>Edge ejecutable mínimo (hoy, desde 15:00)</td><td><code>3.5%</code></td><td>Se exige más tarde para evitar entradas con poco tiempo de reacción.</td></tr>
+              <tr><td>Precio de entrada permitido</td><td><code>2c a 90c</code></td><td>Evita entrar en precios extremos donde la ejecución suele ser mala.</td></tr>
+              <tr><td>Dominancia (desde 13:00 local)</td><td><code>YES &gt;= 95%</code></td><td>Si el libro ya está casi resuelto, el motor suprime oportunidades útiles.</td></tr>
+              <tr><td>Viabilidad física (máxima observada truncada)</td><td>Debe seguir siendo posible</td><td>Si ya se ha visto una máxima que invalida el bucket, se elimina automáticamente.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="box-alt">
+          <h3>2) Límites por estrategia (modo Rookie)</h3>
+          <p>
+            Estos límites se aplican <strong>después</strong> de pasar los filtros duros. Sirven para decidir cuántas oportunidades mostrar a un usuario novato.
+          </p>
+          <table>
+            <thead>
+              <tr><th>Regla</th><th>Conservadora</th><th>Agresiva</th><th>Lectura práctica</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Señal base</td><td><code>shouldTrade = true</code></td><td><code>shouldTrade = true</code></td><td>Las dos exigen que el motor base diga que hay opción real.</td></tr>
+              <tr><td>Semáforo</td><td><code>VERDE</code></td><td><code>VERDE o AMARILLO</code> (no rojo)</td><td>Conservadora es mucho más selectiva.</td></tr>
+              <tr><td>Exec mínimo</td><td><code>7%</code></td><td><code>3%</code></td><td>Conservadora pide ventaja real más alta.</td></tr>
+              <tr><td>Fill mínimo</td><td><code>72%</code></td><td><code>55%</code></td><td>Conservadora exige mejor probabilidad de ejecución.</td></tr>
+              <tr><td>Liquidez mínima</td><td><code>1200</code></td><td><code>300</code></td><td>Agresiva acepta libros más finos.</td></tr>
+              <tr><td>Spread máximo propio</td><td><code>8c</code> (<code>0.08</code>)</td><td>Sin límite propio (pero sí rige el duro de <code>12c</code>)</td><td>Por eso algo puede pasar el motor y aun así no salir en Conservadora.</td></tr>
+              <tr><td>Costes máximos</td><td><code>17%</code></td><td><code>21%</code></td><td>Agresiva tolera más fricción.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="box-risk">
+          <strong>Regla mental para principiantes:</strong>
+          si un mercado está activo en Polymarket pero no aparece en la app, no significa que “la app falle”.
+          Significa que, con los filtros actuales, <strong>la app considera que entrar ahí tiene demasiada fricción o poco edge real</strong>.
+        </div>
       </div>
 
       <div class="box-risk">
@@ -895,7 +1063,7 @@
     </section>
 
     <p class="version">
-      Manual v2.2 • Última actualización: 19-02-2026 • Feedback: <a href="mailto:digitalclaw8@gmail.com" style="color:#8fc8ff">digitalclaw8@gmail.com</a>
+      Manual v2.3 • Última actualización: 23-02-2026 • Feedback: <a href="mailto:digitalclaw8@gmail.com" style="color:#8fc8ff">digitalclaw8@gmail.com</a>
     </p>
   </div>
 </body>
