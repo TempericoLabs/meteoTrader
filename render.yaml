@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: polymeteo
+    runtime: static
+    staticPublishPath: ./docs
+    pullRequestPreviewsEnabled: false
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: X-Frame-Options
+        value: SAMEORIGIN

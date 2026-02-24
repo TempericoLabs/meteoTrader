@@ -1,0 +1,51 @@
+# macOS
+.DS_Store
+
+# IDE / Android Studio / IntelliJ
+*.iml
+.idea/
+.gradle/
+
+# Android / Gradle builds
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Local machine config (NO subir)
+local.properties
+/local.properties
+
+# Secrets / env (web/backend futuro)
+.env
+.env.*
+!.env.example
+secrets/
+.secrets/
+*.pem
+*.key
+*.jks
+*.keystore
+*.p12
+service-account*.json
+firebase-admin*.json
+
+# Python (backend scripts futuros)
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / web app futura
+node_modules/
+dist/
+.next/
+out/
+coverage/
+
+# Logs / temp
+*.log
+tmp/

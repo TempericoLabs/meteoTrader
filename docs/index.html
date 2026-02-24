@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>polyMeteo | MeteoTrader Web MVP</title>
+  <meta name="description" content="polyMeteo: panel de apoyo para mercados meteorológicos de Polymarket. MVP web estático con manual, capturas y roadmap.">
+  <meta name="theme-color" content="#030a18">
+  <style>
+    :root {
+      --bg: #030a18;
+      --panel: rgba(10, 19, 41, 0.88);
+      --panel-2: rgba(12, 26, 57, 0.96);
+      --line: rgba(120, 160, 235, 0.26);
+      --text: #ecf2ff;
+      --muted: #a6b5d6;
+      --accent: #40a7ff;
+      --accent-2: #35f0c4;
+      --warn: #ffc14d;
+      --danger: #ff6a7d;
+      --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+      --radius: 18px;
+      --radius-sm: 12px;
+      --content: 1120px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body {
+      min-height: 100vh;
+      color: var(--text);
+      font-family: "Space Grotesk", "Avenir Next", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(1200px 500px at 5% -10%, rgba(64,167,255,0.25), transparent 55%),
+        radial-gradient(900px 500px at 110% 10%, rgba(53,240,196,0.16), transparent 55%),
+        linear-gradient(180deg, #020611 0%, #030a18 60%, #030916 100%);
+    }
+
+    a { color: inherit; }
+    .page { width: min(var(--content), calc(100% - 28px)); margin: 0 auto; }
+
+    .hero {
+      padding: 28px 0 18px;
+      position: relative;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, rgba(64,167,255,0.65), rgba(53,240,196,0.65), transparent);
+      opacity: 0.7;
+    }
+
+    .hero-top {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+
+    .brand {
+      display: flex;
+      gap: 12px;
+      align-items: baseline;
+      flex-wrap: wrap;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font: 700 clamp(2.1rem, 5vw, 3.4rem) / 0.95 Georgia, "Times New Roman", serif;
+      letter-spacing: -0.03em;
+      color: #f6f8ff;
+    }
+
+    .tag {
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(64, 167, 255, 0.35);
+      color: #b8d6ff;
+      background: rgba(64, 167, 255, 0.08);
+      font: 600 0.8rem/1 "IBM Plex Mono", Menlo, monospace;
+      white-space: nowrap;
+    }
+
+    .status {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      color: var(--muted);
+      font: 500 0.86rem/1.4 "IBM Plex Mono", Menlo, monospace;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-2);
+      box-shadow: 0 0 0 6px rgba(53, 240, 196, 0.12);
+    }
+
+    .hero-card {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 14px;
+      background: linear-gradient(180deg, rgba(8, 17, 37, 0.98), rgba(7, 16, 34, 0.88));
+      border: 1px solid var(--line);
+      border-radius: calc(var(--radius) + 2px);
+      box-shadow: var(--shadow);
+      padding: 16px;
+    }
+
+    .hero-copy h2 {
+      margin: 0 0 10px;
+      font-size: clamp(1.15rem, 2.7vw, 1.7rem);
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+    }
+
+    .hero-copy p {
+      margin: 0 0 10px;
+      color: var(--muted);
+      line-height: 1.5;
+      font-size: 0.96rem;
+      max-width: 62ch;
+    }
+
+    .hero-copy strong { color: #eaf6ff; }
+
+    .cta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 12px;
+      text-decoration: none;
+      font-weight: 600;
+      line-height: 1;
+      border: 1px solid transparent;
+      transition: transform .15s ease, border-color .15s ease, background .15s ease;
+      min-height: 40px;
+    }
+
+    .btn:hover { transform: translateY(-1px); }
+    .btn-primary {
+      background: linear-gradient(180deg, #49afff, #2f8ce8);
+      color: #031228;
+    }
+    .btn-secondary {
+      border-color: rgba(166, 181, 214, 0.28);
+      background: rgba(166, 181, 214, 0.06);
+      color: var(--text);
+    }
+    .btn-ghost {
+      border-color: rgba(53, 240, 196, 0.2);
+      background: rgba(53, 240, 196, 0.06);
+      color: #c8fff3;
+    }
+
+    .hero-metrics {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      align-content: start;
+    }
+
+    .metric {
+      border: 1px solid rgba(120, 160, 235, 0.18);
+      border-radius: 12px;
+      background: rgba(8, 17, 36, 0.72);
+      padding: 10px;
+      min-height: 74px;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font: 500 0.78rem/1.3 "IBM Plex Mono", Menlo, monospace;
+      margin-bottom: 6px;
+      letter-spacing: 0.02em;
+    }
+
+    .metric-value {
+      font-size: 1.05rem;
+      font-weight: 700;
+      line-height: 1.15;
+    }
+
+    .metric-note {
+      margin-top: 4px;
+      color: #9ad1ff;
+      font-size: 0.78rem;
+      line-height: 1.25;
+    }
+
+    .metric-ok .metric-value { color: var(--accent-2); }
+    .metric-warn .metric-value { color: var(--warn); }
+    .metric-risk .metric-value { color: #ff9baa; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 14px;
+      margin: 14px auto 24px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: linear-gradient(180deg, rgba(8, 17, 37, 0.9), rgba(6, 14, 30, 0.92));
+      box-shadow: var(--shadow);
+      overflow: clip;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(120, 160, 235, 0.16);
+      background: rgba(6, 12, 27, 0.55);
+    }
+
+    .card-title {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+
+    .card-subtitle {
+      color: var(--muted);
+      font: 500 0.75rem/1.2 "IBM Plex Mono", Menlo, monospace;
+      white-space: nowrap;
+    }
+
+    .card-body { padding: 14px; }
+
+    .feature-list, .steps, .list-compact {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .feature-list li,
+    .steps li,
+    .list-compact li {
+      margin: 0 0 8px;
+    }
+
+    .feature-list strong,
+    .steps strong,
+    .list-compact strong { color: var(--text); }
+
+    .shots {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .shot {
+      border: 1px solid rgba(120, 160, 235, 0.18);
+      border-radius: 12px;
+      overflow: hidden;
+      background: rgba(9, 18, 38, 0.72);
+    }
+
+    .shot img {
+      display: block;
+      width: 100%;
+      height: 126px;
+      object-fit: cover;
+      background: #061126;
+    }
+
+    .shot figcaption {
+      padding: 8px 9px;
+      color: var(--muted);
+      font: 500 0.73rem/1.25 "IBM Plex Mono", Menlo, monospace;
+    }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .badge {
+      border-radius: 999px;
+      border: 1px solid rgba(120, 160, 235, 0.2);
+      background: rgba(120, 160, 235, 0.06);
+      padding: 5px 10px;
+      color: #d6e3ff;
+      font: 600 0.74rem/1 "IBM Plex Mono", Menlo, monospace;
+    }
+
+    .callout {
+      border-left: 3px solid rgba(53, 240, 196, 0.45);
+      background: rgba(53, 240, 196, 0.05);
+      color: #d6fff5;
+      border-radius: 0 10px 10px 0;
+      padding: 10px 12px;
+      font-size: 0.9rem;
+      line-height: 1.45;
+      margin-top: 12px;
+    }
+
+    .footer {
+      margin: 0 auto 28px;
+      padding: 12px 0 2px;
+      color: var(--muted);
+      font: 500 0.76rem/1.5 "IBM Plex Mono", Menlo, monospace;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .kicker {
+      color: #9ad1ff;
+      font: 600 0.8rem/1.2 "IBM Plex Mono", Menlo, monospace;
+      letter-spacing: 0.02em;
+      margin-bottom: 6px;
+    }
+
+    code {
+      font-family: "IBM Plex Mono", Menlo, monospace;
+      background: rgba(166, 181, 214, 0.08);
+      border: 1px solid rgba(166, 181, 214, 0.14);
+      padding: 1px 5px;
+      border-radius: 7px;
+      color: #d6e8ff;
+      font-size: 0.86em;
+    }
+
+    @media (max-width: 980px) {
+      .hero-card,
+      .grid {
+        grid-template-columns: 1fr;
+      }
+      .shots { grid-template-columns: 1fr; }
+      .shot img { height: 160px; }
+    }
+
+    @media (max-width: 620px) {
+      .page { width: calc(100% - 18px); }
+      .hero { padding-top: 14px; }
+      .hero-card { padding: 12px; }
+      .hero-metrics { grid-template-columns: 1fr 1fr; }
+      .card-header, .card-body { padding-left: 11px; padding-right: 11px; }
+      .btn { width: 100%; }
+      .cta-row { gap: 8px; }
+      .status { width: 100%; justify-content: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="page">
+      <div class="hero-top">
+        <div class="brand">
+          <h1>polyMeteo</h1>
+          <span class="tag">Web MVP (estático)</span>
+        </div>
+        <div class="status">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span>Preparado para Render + SSL + subdominio</span>
+        </div>
+      </div>
+
+      <section class="hero-card" aria-label="Resumen del proyecto">
+        <div class="hero-copy">
+          <div class="kicker">MeteoTrader -> Web</div>
+          <h2>Panel público inicial de <strong>polyMeteo</strong> para documentación, onboarding y acceso rápido.</h2>
+          <p>
+            Esta primera versión web publica el <strong>manual operativo</strong> y una presentación del proyecto.
+            Es la base para desplegar en <code>polymeteo.caplatemp.xyz</code> mientras se prepara la web funcional
+            (lectura en tiempo real, señales, simulación y copytrade).
+          </p>
+          <p>
+            La lógica crítica sigue residiendo en la app Android. Este MVP web sirve para publicar información,
+            enseñar producto y validar el flujo <strong>GitHub -> Render -> DNS -> SSL</strong>.
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="./MANUAL_USO_POLYMETEO.html">Abrir manual completo</a>
+            <a class="btn btn-secondary" href="#roadmap">Ver roadmap web</a>
+            <a class="btn btn-ghost" href="https://polymarket.com/" target="_blank" rel="noopener">Polymarket</a>
+          </div>
+        </div>
+        <div class="hero-metrics" aria-label="Estado del MVP web">
+          <article class="metric metric-ok">
+            <div class="metric-label">Estado deploy</div>
+            <div class="metric-value">Listo para Static Site</div>
+            <div class="metric-note">Sin backend ni dependencias</div>
+          </article>
+          <article class="metric">
+            <div class="metric-label">Contenido publicado</div>
+            <div class="metric-value">Manual + capturas + guía</div>
+            <div class="metric-note">Reutiliza <code>docs/</code></div>
+          </article>
+          <article class="metric metric-warn">
+            <div class="metric-label">Lógica trading en web</div>
+            <div class="metric-value">No incluida aún</div>
+            <div class="metric-note">Fase B / Fase C</div>
+          </article>
+          <article class="metric metric-risk">
+            <div class="metric-label">Siguiente reto técnico</div>
+            <div class="metric-value">Backend + realtime</div>
+            <div class="metric-note">Para paridad Android/Web</div>
+          </article>
+        </div>
+      </section>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="grid" aria-label="Bloques principales">
+      <article class="card">
+        <div class="card-header">
+          <h3 class="card-title">Qué contiene este MVP web</h3>
+          <div class="card-subtitle">Fase A</div>
+        </div>
+        <div class="card-body">
+          <div class="badge-row">
+            <span class="badge">Manual operativo</span>
+            <span class="badge">Capturas UI</span>
+            <span class="badge">Roadmap web</span>
+            <span class="badge">Base para dominio</span>
+          </div>
+          <ol class="feature-list">
+            <li><strong>Manual de uso completo:</strong> referencia funcional de la app Android (modos, métricas, filtros, simulación, copytrade).</li>
+            <li><strong>Presentación pública:</strong> página simple para compartir el proyecto y validar publicación en dominio propio.</li>
+            <li><strong>Estructura extensible:</strong> permite evolucionar a web funcional sin romper el dominio ni la ruta base.</li>
+            <li><strong>Zero backend:</strong> despliegue rápido, barato y con menos puntos de fallo.</li>
+          </ol>
+          <div class="callout">
+            La web funcional vendrá después. Este paso evita mezclar despliegue de infraestructura con la complejidad del motor meteo/trading.
+          </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-header">
+          <h3 class="card-title">Pasos de publicación</h3>
+          <div class="card-subtitle">Render + DonDominio</div>
+        </div>
+        <div class="card-body">
+          <ol class="steps">
+            <li><strong>Subir este repo a GitHub</strong> con <code>docs/index.html</code> y <code>render.yaml</code>.</li>
+            <li><strong>Crear Static Site en Render</strong> desde el repo.</li>
+            <li><strong>Sincronizar Blueprint</strong> (Render leerá <code>render.yaml</code>).</li>
+            <li><strong>Añadir custom domain</strong> <code>polymeteo.caplatemp.xyz</code>.</li>
+            <li><strong>Crear CNAME en DonDominio</strong> host <code>polymeteo</code> -> <code>*.onrender.com</code>.</li>
+            <li><strong>Esperar propagación</strong> y validar SSL automático.</li>
+          </ol>
+        </div>
+      </article>
+    </section>
+
+    <section class="card" aria-label="Capturas de la app Android">
+      <div class="card-header">
+        <h3 class="card-title">Referencia visual (Android MVP actual)</h3>
+        <div class="card-subtitle">No es la web funcional</div>
+      </div>
+      <div class="card-body">
+        <p style="margin:0 0 10px;color:var(--muted);line-height:1.45;">
+          Estas capturas muestran la UI móvil actual (grid, detalle y simulación), que servirá de referencia para la futura versión web de <strong>polyMeteo</strong>.
+        </p>
+        <div class="shots">
+          <figure class="shot">
+            <img src="./assets/screens/cities-screen.svg" alt="Pantalla principal de ciudades en la app Android">
+            <figcaption>Grid de ciudades (señales, estado, refresco).</figcaption>
+          </figure>
+          <figure class="shot">
+            <img src="./assets/screens/detail-screen.svg" alt="Pantalla de detalle de ciudad en la app Android">
+            <figcaption>Detalle de ciudad (METAR, MM/MMA, Trader Mode).</figcaption>
+          </figure>
+          <figure class="shot">
+            <img src="./assets/screens/paper-screen.svg" alt="Pantalla de simulación paper trading en la app Android">
+            <figcaption>Simulación paper trading y seguimiento de resultados.</figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid" id="roadmap" aria-label="Roadmap de evolución web">
+      <article class="card">
+        <div class="card-header">
+          <h3 class="card-title">Roadmap web recomendado</h3>
+          <div class="card-subtitle">Pragmático</div>
+        </div>
+        <div class="card-body">
+          <ol class="feature-list">
+            <li><strong>Fase A (actual):</strong> landing + manual + dominio + SSL.</li>
+            <li><strong>Fase B:</strong> frontend web de lectura con datos servidos por backend propio.</li>
+            <li><strong>Fase C:</strong> paridad Android/Web (MM/MMA, Trader Mode, paper, copytrade, cuenta).</li>
+            <li><strong>Fase D:</strong> auth, acceso privado, alertas push web y paneles multiusuario.</li>
+          </ol>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-header">
+          <h3 class="card-title">Requisitos para la web funcional</h3>
+          <div class="card-subtitle">Core futuro</div>
+        </div>
+        <div class="card-body">
+          <ul class="list-compact">
+            <li><strong>Backend centralizado</strong> para scraping, proveedores y lógica de decisión.</li>
+            <li><strong>API propia</strong> para servir ciudades, detalle, mercados y señales ya calculadas.</li>
+            <li><strong>Realtime</strong> (SSE/WebSocket) para copytrade y cambios de mercado.</li>
+            <li><strong>Gestión segura de secretos</strong> (nunca en frontend).</li>
+            <li><strong>Persistencia</strong> (paper trading, preferencias, cache, histórico calibrado).</li>
+          </ul>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <footer class="page footer">
+    <div>polyMeteo Web MVP · Publicación estática inicial</div>
+    <div>Repositorio: <code>meteoTrader</code> · Ruta pública del manual: <code>/MANUAL_USO_POLYMETEO.html</code></div>
+  </footer>
+</body>
+</html>
