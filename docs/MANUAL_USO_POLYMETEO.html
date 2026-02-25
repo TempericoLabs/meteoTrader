@@ -297,7 +297,7 @@
     <section id="indice" class="box toc">
       <h2>Índice</h2>
       <ol>
-        <li><a href="#novedades-v24">Novedades desde la versión anterior (v4.9)</a></li>
+        <li><a href="#novedades-v24">Novedades desde la versión anterior (v4.10)</a></li>
         <li><a href="#capitulo-0">Capítulo 0: Basics de mercados de predicción</a></li>
         <li><a href="#capitulo-1">Capítulo 1: Qué es Polymarket y por qué esta app es clave</a></li>
         <li><a href="#capitulo-2">Capítulo 2: Flujo general de uso (de principiante a operativo)</a></li>
@@ -315,10 +315,11 @@
     </section>
 
     <section id="novedades-v24">
-      <h2>Novedades desde la versión anterior (v4.9)</h2>
+      <h2>Novedades desde la versión anterior (v4.10)</h2>
       <div class="box">
         <h3>Cambios visibles para el usuario</h3>
         <ul>
+          <li><strong>Web local/funcional (Fix Wunderground estación control):</strong> se corrige un bug de parseo en la lectura embebida de Wunderground que podía interpretar valores <strong>imperiales (°F)</strong> como <strong>°C</strong> en la <strong>Temp estación control</strong> de algunas ciudades (ejemplo: Seúl aparecía como <code>39°C</code> en lugar de ~<code>4°C</code>). El parser embedded ahora prioriza unidad imperial por defecto cuando la unidad no viene explícita.</li>
           <li><strong>Infra web (Fase B1.19, publicación funcional en Render preparada):</strong> se añade preparación de despliegue para la <strong>web funcional (backend + frontend)</strong> en un <strong>segundo servicio Render</strong>, manteniendo la <strong>landing pública estática separada</strong>. Incluye blueprint de referencia (<code>render.functional.yaml</code>), guía operativa paso a paso y soporte de ruta persistente configurable para estado Web Push (<code>POLYMETEO_WEBPUSH_STATE_FILE</code>).</li>
           <li><strong>Web local (Fase B1.18, Cuenta Polymarket web):</strong> se añade un panel <strong>Cuenta Polymarket web (lectura)</strong> por wallet, con <strong>valor de cartera</strong>, recuento de <strong>posiciones abiertas/cerradas</strong>, <strong>PnL abierto/cerrado</strong>, y listas de <strong>posiciones/trades recientes</strong>. La wallet puede venir de <strong>input manual</strong> o detectarse por defecto desde <code>POLYMARKET_WALLET_ADDRESS</code> (entorno / <code>local.properties</code>) a través del backend.</li>
           <li><strong>Web local (Fase B1.17, Dashboard operativo unificado):</strong> se añade un panel superior <strong>Dashboard operativo</strong> con lectura rápida de <strong>estado backend</strong>, <strong>operativa actual (modo/estrategia/ciudad/horizonte)</strong>, <strong>Paper Trading local</strong>, <strong>CopyTrade SSE (foreground)</strong>, <strong>Web Push server-side</strong> (suscripciones/monitores/auditoría) e <strong>Intel usuario</strong>, para diagnóstico y control sin cambiar de sección.</li>
@@ -1107,7 +1108,7 @@
     </section>
 
     <p class="version">
-      Manual v4.9 • Última actualización: 25-02-2026 • Feedback: <a href="mailto:digitalclaw8@gmail.com" style="color:#8fc8ff">digitalclaw8@gmail.com</a>
+      Manual v4.10 • Última actualización: 25-02-2026 • Feedback: <a href="mailto:digitalclaw8@gmail.com" style="color:#8fc8ff">digitalclaw8@gmail.com</a>
     </p>
   </div>
 </body>

@@ -362,14 +362,25 @@ function parseWundergroundEmbeddedMax(html, preferredUnit) {
   let best = null;
   while ((match = keyRegex.exec(html)) !== null) {
     const value = Number(match[2]);
-    const context = html.slice(Math.max(0, match.index - 700), Math.min(html.length, match.index + 700));
+    const context = html.slice(Math.max(0, match.index - 2500), Math.min(html.length, match.index + 2500));
     let unit = null;
     if (/unit[^a-z0-9]{0,12}(?:[\"'])?e(?:nglish|n-US|imperial)/i.test(context) || /temperatureUnit[^a-z0-9]{0,12}(?:[\"'])?F/i.test(context)) {
       unit = 'F';
     } else if (/unit[^a-z0-9]{0,12}(?:[\"'])?(?:metric|si)/i.test(context) || /temperatureUnit[^a-z0-9]{0,12}(?:[\"'])?C/i.test(context)) {
       unit = 'C';
     }
-    unit = unit || inferUnitFromValue(value, preferredUnit);
+    if (!unit) {
+      // Wunderground history pages often embed weather.com payloads in imperial units (`units=e`)
+      // even for cities shown in Celsius in the UI. When no explicit hint is found nearby,
+      // prefer F here to avoid false highs like "39°C" that are actually 39°F.
+      if (/(?:[?&]|\\u0026)units=(?:e|imperial)\b/i.test(context) || /"units"\s*:\s*"e"/i.test(context)) {
+        unit = 'F';
+      } else if (/(?:[?&]|\\u0026)units=(?:m|metric)\b/i.test(context) || /"units"\s*:\s*"m"/i.test(context)) {
+        unit = 'C';
+      } else {
+        unit = 'F';
+      }
+    }
     if (!isPlausibleTemp(value, unit)) continue;
     const valueC = unit === 'C' ? value : fahrenheitToCelsius(value);
     if (!best || valueC > best.valueC) {
