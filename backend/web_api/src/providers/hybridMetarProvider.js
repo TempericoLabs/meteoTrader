@@ -443,8 +443,8 @@ function extractInlineScriptsText(html) {
 
 function parseWundergroundUnitFromContext(context) {
   const ctx = String(context || '');
-  if (/temperatureUnit[^a-z0-9]{0,16}(?:["'])?F/i.test(ctx)) return 'F';
-  if (/temperatureUnit[^a-z0-9]{0,16}(?:["'])?C/i.test(ctx)) return 'C';
+  // Paridad con app móvil: usar solo pistas `units=e/m` en el contexto inmediato.
+  // `temperatureUnit` aparece mezclado en payloads vecinos y puede contaminar la unidad.
   if (/(?:[?&]|\\u0026)units=(?:e|imperial)\b/i.test(ctx) || /"units"\s*:\s*"e"/i.test(ctx)) return 'F';
   if (/(?:[?&]|\\u0026)units=(?:m|metric)\b/i.test(ctx) || /"units"\s*:\s*"m"/i.test(ctx)) return 'C';
   return null;
