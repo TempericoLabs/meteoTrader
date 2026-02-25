@@ -413,6 +413,33 @@ function chooseHigherTempCandidate(...candidates) {
   return normalized.sort((a, b) => b.valueC - a.valueC)[0];
 }
 
+function wundergroundCandidatePriority(sourceKind) {
+  const source = String(sourceKind || '');
+  if (source.startsWith('summary-')) return 300;
+  if (source === 'pws-current') return 200;
+  if (source.startsWith('embedded-')) return 100;
+  return 0;
+}
+
+function choosePreferredWundergroundCandidate(candidates) {
+  const normalized = candidates
+    .filter(Boolean)
+    .map((entry) => ({
+      ...entry,
+      valueC: entry.valueC ?? (entry.unit === 'C' ? entry.value : fahrenheitToCelsius(entry.value)),
+      priority: wundergroundCandidatePriority(entry.source)
+    }))
+    .filter((entry) => Number.isFinite(entry.valueC));
+
+  if (!normalized.length) return null;
+
+  normalized.sort((a, b) => {
+    if (b.priority !== a.priority) return b.priority - a.priority;
+    return b.valueC - a.valueC;
+  });
+  return normalized[0];
+}
+
 async function fetchHtml(url, { accept = 'text/html,application/xhtml+xml' } = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), WUNDERGROUND_TIMEOUT_MS);
@@ -442,6 +469,7 @@ async function fetchWundergroundControlSnapshot(cityId, displayUnit) {
   if (!cfg) return { tempC: null, sourceUrl: null, error: 'Ciudad sin URL Wunderground configurada' };
 
   const errors = [];
+  const collectedCandidates = [];
   const attempts = [cfg.controlUrl, cfg.pwsUrl].filter(Boolean);
   for (const url of attempts) {
     const htmlResp = await fetchHtml(url);
@@ -453,21 +481,37 @@ async function fetchWundergroundControlSnapshot(cityId, displayUnit) {
     const summary = parseWundergroundSummaryHighTemp(pageText, displayUnit);
     const embedded = parseWundergroundEmbeddedMax(htmlResp.body, displayUnit);
     const pwsCurrent = url.includes('/dashboard/pws/') ? parseWundergroundPwsCurrent(htmlResp.body, displayUnit) : null;
-    // Prioridad: Summary (High Temp Actual) + PWS actual. El embedded de WU se usa solo como fallback,
-    // porque el HTML puede incluir payloads de otras ubicaciones y contaminar la máxima.
-    const primaryChosen = chooseHigherTempCandidate(summary, pwsCurrent);
-    const fallbackChosen = chooseHigherTempCandidate(embedded, pwsCurrent);
-    const chosen = primaryChosen || fallbackChosen;
-    if (chosen) {
-      return {
-        tempC: chosen.valueC,
-        sourceUrl: htmlResp.url || url,
-        sourceKind: chosen.source,
-        error: null
-      };
+
+    const attach = (candidate) => {
+      if (!candidate) return;
+      collectedCandidates.push({
+        ...candidate,
+        sourceUrl: htmlResp.url || url
+      });
+    };
+
+    // Recogemos todo y decidimos al final con prioridad global:
+    // Summary (control) > PWS current > embedded (fallback).
+    // Evita que un embedded contaminado en controlUrl impida revisar pwsUrl.
+    attach(summary);
+    attach(pwsCurrent);
+    attach(embedded);
+
+    if (!summary && !pwsCurrent && !embedded) {
+      errors.push(`${url} -> sin maxima detectable`);
     }
-    errors.push(`${url} -> sin maxima detectable`);
   }
+
+  const chosen = choosePreferredWundergroundCandidate(collectedCandidates);
+  if (chosen) {
+    return {
+      tempC: chosen.valueC,
+      sourceUrl: chosen.sourceUrl || cfg.controlUrl || cfg.pwsUrl || null,
+      sourceKind: chosen.source,
+      error: null
+    };
+  }
+
   return {
     tempC: null,
     sourceUrl: cfg.controlUrl || cfg.pwsUrl || null,
