@@ -869,31 +869,45 @@ function normalCdf(x, mean, sigma) {
   return 0.5 * (1 + erfApprox((x - mean) / (s * Math.SQRT2)));
 }
 
-function bucketProbabilityYesPct(market, meanC, sigmaC) {
+function applyConfidenceWeightProbability(probability, confidenceMultiplier) {
+  const p = clamp(Number(probability) || 0.5, 0.001, 0.999);
+  const centered = p - 0.5;
+  const weighted = 0.5 + (centered * (Number.isFinite(confidenceMultiplier) ? confidenceMultiplier : 1.0));
+  return clamp(weighted, 0.001, 0.999);
+}
+
+function bucketProbabilityYesPct(market, meanC, sigmaC, confidenceMultiplier = 1.0) {
   if (!Number.isFinite(meanC)) return null;
   const unit = market.unit || 'C';
   const mean = celsiusToUnit(meanC, unit);
-  const sigma = unit === 'F' ? sigmaC * 9 / 5 : sigmaC;
+  const sigma = Math.max(0.6, (unit === 'F' ? sigmaC * 9 / 5 : sigmaC));
   const t = Number(market.threshold);
   const u = Number(market.upperThreshold);
   if (!Number.isFinite(mean) || !Number.isFinite(sigma)) return null;
   const cdf = (x) => clamp(normalCdf(x, mean, sigma) ?? 0.5, 0, 1);
+  let rawProb = null;
   switch (market.type) {
     case 'EXACT':
       if (!Number.isFinite(t)) return null;
-      return clamp((cdf(t + 1) - cdf(t)) * 100, 0.1, 99.9);
+      rawProb = cdf(t + 0.5) - cdf(t - 0.5);
+      break;
     case 'BETWEEN':
       if (!Number.isFinite(t) || !Number.isFinite(u)) return null;
-      return clamp((cdf(Math.max(t, u) + 1) - cdf(Math.min(t, u))) * 100, 0.1, 99.9);
+      rawProb = cdf(Math.max(t, u) + 0.5) - cdf(Math.min(t, u) - 0.5);
+      break;
     case 'GREATER_OR_EQUAL':
       if (!Number.isFinite(t)) return null;
-      return clamp((1 - cdf(t)) * 100, 0.1, 99.9);
+      rawProb = 1 - cdf(t - 0.5);
+      break;
     case 'LESS_OR_EQUAL':
       if (!Number.isFinite(t)) return null;
-      return clamp(cdf(t + 1) * 100, 0.1, 99.9);
+      rawProb = cdf(t + 0.5);
+      break;
     default:
       return null;
   }
+  const calibrated = applyConfidenceWeightProbability(rawProb, confidenceMultiplier);
+  return clamp(calibrated * 100, 0.1, 99.9);
 }
 
 function inferDirectionFromMean(market, meanC) {
@@ -923,6 +937,33 @@ function inferDirectionFromMean(market, meanC) {
   }
 }
 
+function inferDirectionParity(market, meanC, recommendedBuy) {
+  const mean = celsiusToUnit(meanC, market.unit || 'C');
+  const t = Number(market.threshold);
+  const u = Number(market.upperThreshold);
+  switch (market.type) {
+    case 'GREATER_OR_EQUAL':
+      return recommendedBuy === 'YES' ? 'OVER' : 'UNDER';
+    case 'LESS_OR_EQUAL':
+      return recommendedBuy === 'YES' ? 'UNDER' : 'OVER';
+    case 'EXACT':
+      if (!Number.isFinite(mean)) return 'RANGE';
+      if (mean >= t + 0.35) return 'OVER';
+      if (mean <= t - 0.35) return 'UNDER';
+      return 'RANGE';
+    case 'BETWEEN': {
+      if (!Number.isFinite(mean)) return 'RANGE';
+      const upper = Number.isFinite(u) ? u : t;
+      if (recommendedBuy === 'YES') return 'RANGE';
+      if (mean > upper + 0.35) return 'OVER';
+      if (mean < t - 0.35) return 'UNDER';
+      return 'RANGE';
+    }
+    default:
+      return inferDirectionFromMean(market, meanC);
+  }
+}
+
 function isMarketImpossibleByObservedTrunc(market, observedMaxC) {
   if (!Number.isFinite(observedMaxC)) return false;
   const observedUnit = celsiusToUnit(observedMaxC, market.unit || 'C');
@@ -949,73 +990,228 @@ function sigmaCForHorizon(horizonKey) {
   return 2.6;
 }
 
-function computeExecutionMetrics({ market, modelYesPct, marketYesPct, actionSide, horizonKey, localHour }) {
+const POLY_ASSUMED_ROUNDTRIP_FEE_RATE = 0.018;
+const POLY_DEFAULT_SPREAD_ASSUMPTION = 0.020;
+const POLY_MAX_TOTAL_EXECUTION_COST = 0.30;
+const POLY_MIN_FILL_PROBABILITY_TO_TRADE = 0.50;
+const POLY_MIN_EXECUTABLE_EDGE_TO_TRADE = 0.020;
+const POLY_GREEN_MIN_FILL_PROBABILITY = 0.65;
+const POLY_GREEN_EXECUTABLE_EDGE = 0.06;
+const POLY_YELLOW_MIN_FILL_PROBABILITY = 0.45;
+const POLY_YELLOW_EXECUTABLE_EDGE = 0.025;
+const POLY_CONTROL_MIN_EXECUTABLE_EDGE = 0.025;
+const POLY_CONTROL_MIN_FILL = 0.55;
+const POLY_CONTROL_MIN_LIQUIDITY = 250.0;
+const POLY_CONTROL_MIN_VOLUME_24H = 200.0;
+const POLY_CONTROL_MAX_SPREAD = 0.12;
+const POLY_CONTROL_MAX_TOTAL_COST = 0.22;
+const POLY_CONTROL_MIN_ENTRY_PRICE = 0.02;
+const POLY_CONTROL_MAX_ENTRY_PRICE = 0.90;
+const POLY_LATE_DAY_HOUR = 15;
+const POLY_LATE_DAY_MIN_EXECUTABLE_EDGE = 0.035;
+
+const CAL_LOCAL_TIME_BAND = Object.freeze({
+  NIGHT: 'NIGHT',
+  MORNING: 'MORNING',
+  MIDDAY: 'MIDDAY',
+  EVENING: 'EVENING'
+});
+
+const CAL_SIGMA_BAND_MULTIPLIER = Object.freeze({
+  [CAL_LOCAL_TIME_BAND.NIGHT]: 1.22,
+  [CAL_LOCAL_TIME_BAND.MORNING]: 1.12,
+  [CAL_LOCAL_TIME_BAND.MIDDAY]: 0.95,
+  [CAL_LOCAL_TIME_BAND.EVENING]: 0.88
+});
+
+const CAL_CONFIDENCE_BAND_MULTIPLIER = Object.freeze({
+  [CAL_LOCAL_TIME_BAND.NIGHT]: 0.86,
+  [CAL_LOCAL_TIME_BAND.MORNING]: 0.93,
+  [CAL_LOCAL_TIME_BAND.MIDDAY]: 1.05,
+  [CAL_LOCAL_TIME_BAND.EVENING]: 1.12
+});
+
+const CAL_BIAS_BAND_C = Object.freeze({
+  [CAL_LOCAL_TIME_BAND.NIGHT]: -0.05,
+  [CAL_LOCAL_TIME_BAND.MORNING]: 0.00,
+  [CAL_LOCAL_TIME_BAND.MIDDAY]: 0.12,
+  [CAL_LOCAL_TIME_BAND.EVENING]: 0.18
+});
+
+function calProfile(st, st1, st2, ct, ct1, ct2, bt = 0, bt1 = 0, bt2 = 0) {
+  return {
+    sigmaByHorizon: [st, st1, st2],
+    confidenceByHorizon: [ct, ct1, ct2],
+    biasByHorizonC: [bt, bt1, bt2]
+  };
+}
+
+const TRADER_CAL_DEFAULT_PROFILE = calProfile(1.00, 1.14, 1.28, 1.00, 0.94, 0.88);
+const TRADER_CAL_CITY_PROFILES = Object.freeze({
+  'miami': calProfile(1.08, 1.20, 1.34, 0.98, 0.90, 0.84, 0.20, 0.10, 0.00),
+  'london': calProfile(0.96, 1.10, 1.24, 1.02, 0.96, 0.90, 0.00, 0.00, 0.00),
+  'toronto': calProfile(1.00, 1.14, 1.28, 1.00, 0.94, 0.88, 0.00, 0.00, 0.00),
+  'seattle': calProfile(0.94, 1.08, 1.20, 1.05, 0.98, 0.92, -0.10, -0.10, -0.10),
+  'dallas': calProfile(1.07, 1.20, 1.35, 0.99, 0.91, 0.84, 0.20, 0.20, 0.10),
+  'wellington': calProfile(1.09, 1.22, 1.36, 0.96, 0.89, 0.83, -0.10, -0.10, 0.00),
+  'ankara': calProfile(1.02, 1.16, 1.30, 1.00, 0.93, 0.87, 0.10, 0.10, 0.00),
+  'seoul': calProfile(1.01, 1.15, 1.29, 1.00, 0.93, 0.87, 0.10, 0.10, 0.00),
+  'new-york': calProfile(1.04, 1.17, 1.31, 1.00, 0.92, 0.86, 0.10, 0.10, 0.00),
+  'chicago': calProfile(1.05, 1.18, 1.32, 0.99, 0.91, 0.85, 0.10, 0.10, 0.00),
+  'atlanta': calProfile(1.06, 1.19, 1.33, 0.99, 0.91, 0.85, 0.20, 0.10, 0.00),
+  'paris': calProfile(0.97, 1.11, 1.25, 1.01, 0.95, 0.89, 0.00, 0.00, 0.00),
+  'buenos-aires': calProfile(1.03, 1.16, 1.30, 1.00, 0.93, 0.87, 0.00, 0.00, 0.00),
+  'sao-paulo': calProfile(1.02, 1.15, 1.29, 1.00, 0.94, 0.88, 0.00, 0.00, 0.00)
+});
+
+function traderCalBandFromHour(hour) {
+  const h = ((Number(hour) || 0) % 24 + 24) % 24;
+  if (h >= 0 && h <= 5) return CAL_LOCAL_TIME_BAND.NIGHT;
+  if (h <= 10) return CAL_LOCAL_TIME_BAND.MORNING;
+  if (h <= 16) return CAL_LOCAL_TIME_BAND.MIDDAY;
+  return CAL_LOCAL_TIME_BAND.EVENING;
+}
+
+function resolveTraderCalibration(cityId, horizonDays, localHour) {
+  const profile = TRADER_CAL_CITY_PROFILES[cityId] || TRADER_CAL_DEFAULT_PROFILE;
+  const idx = clamp(Number.isFinite(horizonDays) ? horizonDays : 0, 0, 2);
+  const band = traderCalBandFromHour(localHour);
+  const bandInfluence = idx === 0 ? 1.0 : (idx === 1 ? 0.45 : 0.25);
+
+  const baseSigma = profile.sigmaByHorizon[idx];
+  const baseConfidence = profile.confidenceByHorizon[idx];
+  const baseBias = profile.biasByHorizonC[idx];
+  const sigmaBand = 1.0 + (((CAL_SIGMA_BAND_MULTIPLIER[band] ?? 1.0) - 1.0) * bandInfluence);
+  const confidenceBand = 1.0 + (((CAL_CONFIDENCE_BAND_MULTIPLIER[band] ?? 1.0) - 1.0) * bandInfluence);
+
+  return {
+    sigmaMultiplier: clamp(baseSigma * sigmaBand, 0.70, 2.20),
+    confidenceMultiplier: clamp(baseConfidence * confidenceBand, 0.55, 1.25),
+    meanBiasC: clamp(baseBias + ((CAL_BIAS_BAND_C[band] ?? 0.0) * bandInfluence), -1.2, 1.2)
+  };
+}
+
+function resolveHorizonDaysFromKey(horizonKey) {
+  if (horizonKey === 'today') return 0;
+  if (horizonKey === 'tomorrow') return 1;
+  return 2;
+}
+
+function logistic(x) {
+  return 1.0 / (1.0 + Math.exp(-x));
+}
+
+function estimateFillProbabilityParity(liquidity, volume24h, spreadDecimal) {
+  const liq = Math.max(0, Number(liquidity) || 0);
+  const vol = Math.max(0, Number(volume24h) || 0);
+  const spr = Math.max(0, Number.isFinite(spreadDecimal) ? spreadDecimal : POLY_DEFAULT_SPREAD_ASSUMPTION);
+  const liquidityScore = logistic((Math.log(1 + liq) - Math.log(1 + 1800.0)) / 0.9);
+  const volumeScore = logistic((Math.log(1 + vol) - Math.log(1 + 1200.0)) / 0.95);
+  const spreadScore = clamp(1.0 - (spr / 0.08), 0.0, 1.0);
+  const blended = (0.50 * liquidityScore) + (0.30 * volumeScore) + (0.20 * spreadScore);
+  return clamp(0.15 + (0.80 * blended), 0.15, 0.98);
+}
+
+function estimateSpreadCostParity(spreadDecimal, fillProbability) {
+  const effectiveSpread = clamp(Number.isFinite(spreadDecimal) ? spreadDecimal : POLY_DEFAULT_SPREAD_ASSUMPTION, 0.0, 0.12);
+  return Math.min(effectiveSpread * (0.50 + ((1.0 - fillProbability) * 0.35)), 0.07);
+}
+
+function estimateLiquidityCostParity(liquidity, volume24h, fillProbability) {
+  const liq = Math.max(0, Number(liquidity) || 0);
+  const vol = Math.max(0, Number(volume24h) || 0);
+  const thinBookPenalty = liq < 600 ? 0.020 : (liq < 1500 ? 0.010 : 0.0);
+  const weakFlowPenalty = vol < 500 ? 0.015 : (vol < 1200 ? 0.008 : 0.0);
+  const lowFillPenalty = clamp(1.0 - fillProbability, 0.0, 1.0) * 0.06;
+  return Math.min(thinBookPenalty + weakFlowPenalty + lowFillPenalty, 0.09);
+}
+
+function computeExecutionMetrics({ market, modelYesPct, marketYesPct, actionSide }) {
   const yesAsk = Number(market.yesAskCents);
   const noAsk = Number(market.noAskCents);
-  const spreadPct = Number.isFinite(market.spreadPct) ? market.spreadPct : 99;
-  const liquidityBook = Number.isFinite(market.liquidityBook) ? market.liquidityBook : 0;
-  const volumeBucket = Number.isFinite(market.volumeBucket) ? market.volumeBucket : 0;
   const selectedAsk = actionSide === 'YES' ? yesAsk : noAsk;
-  const rawEdgePct = Math.abs(modelYesPct - marketYesPct);
+  const marketYesProb = clamp(Number(marketYesPct) / 100, 0.001, 0.999);
+  const modelYesProb = clamp(Number(modelYesPct) / 100, 0.001, 0.999);
+  const marketNoProb = clamp(1.0 - marketYesProb, 0.001, 0.999);
 
-  const feePct = clamp(0.2 + (selectedAsk / 100) * 1.2, 0.2, 1.8);
-  const spreadCostPct = clamp(spreadPct * 0.75, 0, 14);
-  const liqCostPct = clamp(12 / Math.sqrt(Math.max(1, liquidityBook)), 0.5, 8.5);
-  const volumeCostPct = volumeBucket > 0 ? clamp(8 / Math.sqrt(Math.max(1, volumeBucket / 10)), 0.2, 5.5) : 5.5;
-  const totalCostPct = feePct + spreadCostPct + liqCostPct + volumeCostPct;
+  const evYes = modelYesProb - marketYesProb;
+  const evNo = (1.0 - modelYesProb) - marketNoProb;
+  const rawEdge = Math.max(evYes, evNo);
+  const selectedPriceProb = actionSide === 'YES' ? marketYesProb : marketNoProb;
 
-  const fillPct = clamp(
-    96
-      - spreadPct * 4.2
-      - (liquidityBook < 1500 ? (1500 - liquidityBook) / 30 : 0)
-      - (volumeBucket < 3000 ? (3000 - volumeBucket) / 90 : 0),
-    8,
-    96
-  );
+  const spreadDecimal = Number.isFinite(market.spreadPct) ? (market.spreadPct / 100.0) : POLY_DEFAULT_SPREAD_ASSUMPTION;
+  const liquidityBook = Number.isFinite(market.liquidityBook) ? market.liquidityBook : 0;
+  const volume24h = Number.isFinite(market.realMarketOverlay?.volume24h) ? market.realMarketOverlay.volume24h : (Number(market.volume24h) || 0);
+  const volumeBucket = Number.isFinite(market.volumeBucket) ? market.volumeBucket : 0;
 
-  const edgeAfterCostPct = rawEdgePct - totalCostPct;
-  const executableEdgePct = edgeAfterCostPct * (fillPct / 100);
-  const execMinPct = horizonKey === 'today' && Number.isFinite(localHour) && localHour >= 15
-    ? WEB_ENGINE_THRESHOLDS.execMinPctToday + 1.0
-    : (horizonKey === 'today' ? WEB_ENGINE_THRESHOLDS.execMinPctToday : WEB_ENGINE_THRESHOLDS.execMinPctFuture);
+  const fillProbability = estimateFillProbabilityParity(liquidityBook, volume24h, spreadDecimal);
+  const feeCost = Math.max(0, selectedPriceProb * POLY_ASSUMED_ROUNDTRIP_FEE_RATE);
+  const spreadCost = estimateSpreadCostParity(spreadDecimal, fillProbability);
+  const liquidityCost = estimateLiquidityCostParity(liquidityBook, volume24h, fillProbability);
+  const totalCost = Math.min(feeCost + spreadCost + liquidityCost, POLY_MAX_TOTAL_EXECUTION_COST);
+  const edgeAfterCosts = rawEdge - totalCost;
+  const executableEdge = edgeAfterCosts * fillProbability;
 
-  const checks = {
-    price: Number.isFinite(selectedAsk) && selectedAsk >= WEB_ENGINE_THRESHOLDS.priceMinCents && selectedAsk <= WEB_ENGINE_THRESHOLDS.priceMaxCents,
-    spread: spreadPct <= WEB_ENGINE_THRESHOLDS.spreadMaxPct,
-    liquidity: liquidityBook >= WEB_ENGINE_THRESHOLDS.liquidityMin,
-    volumeBucket: volumeBucket >= WEB_ENGINE_THRESHOLDS.volumeBucketMin,
-    totalCost: totalCostPct <= WEB_ENGINE_THRESHOLDS.totalCostMaxPct,
-    fill: fillPct >= WEB_ENGINE_THRESHOLDS.fillMinPct,
-    exec: executableEdgePct >= execMinPct
-  };
-
-  const shouldTrade = Object.values(checks).every(Boolean);
-  const greenProfile = shouldTrade && executableEdgePct >= 7 && fillPct >= 70 && totalCostPct <= 17 && spreadPct <= 8;
-  const signal = shouldTrade ? (greenProfile ? 'GREEN' : 'YELLOW') : 'RED';
-
-  let failReason = null;
-  if (!checks.price) failReason = 'Precio fuera de rango operativo';
-  else if (!checks.spread) failReason = 'Spread demasiado alto';
-  else if (!checks.liquidity) failReason = 'Liquidez libro insuficiente';
-  else if (!checks.volumeBucket) failReason = 'Volumen bucket insuficiente';
-  else if (!checks.totalCost) failReason = 'Coste total demasiado alto';
-  else if (!checks.fill) failReason = 'Fill insuficiente';
-  else if (!checks.exec) failReason = 'Ventaja ejecutable insuficiente';
+  const signal = executableEdge >= POLY_GREEN_EXECUTABLE_EDGE && fillProbability >= POLY_GREEN_MIN_FILL_PROBABILITY
+    ? 'GREEN'
+    : (executableEdge >= POLY_YELLOW_EXECUTABLE_EDGE && fillProbability >= POLY_YELLOW_MIN_FILL_PROBABILITY ? 'YELLOW' : 'RED');
+  const baseShouldTrade = executableEdge >= POLY_MIN_EXECUTABLE_EDGE_TO_TRADE && fillProbability >= POLY_MIN_FILL_PROBABILITY_TO_TRADE;
 
   return {
     selectedAskCents: selectedAsk,
-    rawEdgePct: roundTo(rawEdgePct, 1),
-    feePct: roundTo(feePct, 1),
-    totalCostPct: roundTo(totalCostPct, 1),
-    fillPct: roundTo(fillPct, 1),
-    executableEdgePct: roundTo(executableEdgePct, 1),
-    edgeAfterCostPct: roundTo(edgeAfterCostPct, 1),
-    execMinPct: roundTo(execMinPct, 1),
-    shouldTrade,
+    selectedPriceProb,
+    rawEdgePct: roundTo(rawEdge * 100, 1),
+    feePct: roundTo(feeCost * 100, 1),
+    totalCostPct: roundTo(totalCost * 100, 1),
+    fillPct: roundTo(fillProbability * 100, 1),
+    executableEdgePct: roundTo(executableEdge * 100, 1),
+    edgeAfterCostPct: roundTo(edgeAfterCosts * 100, 1),
+    execMinPct: roundTo(POLY_MIN_EXECUTABLE_EDGE_TO_TRADE * 100, 1),
+    baseShouldTrade,
+    shouldTrade: baseShouldTrade,
     signal,
-    failReason,
-    checks
+    failReason: baseShouldTrade ? null : 'Señal base PASS: ventaja ejecutable insuficiente',
+    checks: {}
   };
+}
+
+function evaluateExecutionControlParity({ metrics, market, actionSide, horizonKey, localHour }) {
+  const minEdge = (horizonKey === 'today' && Number.isFinite(localHour) && localHour >= POLY_LATE_DAY_HOUR)
+    ? POLY_LATE_DAY_MIN_EXECUTABLE_EDGE
+    : POLY_CONTROL_MIN_EXECUTABLE_EDGE;
+  const liquidity = Math.max(0, Number(market.liquidityBook) || 0);
+  const volume24h = Math.max(0, Number(market.realMarketOverlay?.volume24h ?? market.volume24h) || 0);
+  const spread = Math.max(0, Number(market.spreadPct || 0) / 100.0);
+  const selectedPrice = Number(metrics.selectedPriceProb);
+  const fillProbability = Number(metrics.fillPct) / 100.0;
+  const executableEdge = Number(metrics.executableEdgePct) / 100.0;
+  const totalCost = Number(metrics.totalCostPct) / 100.0;
+
+  if (!metrics.baseShouldTrade) {
+    return { passes: false, reason: 'Señal base PASS: ventaja ejecutable insuficiente', minEdgePct: roundTo(minEdge * 100, 1) };
+  }
+  if (liquidity < POLY_CONTROL_MIN_LIQUIDITY) {
+    return { passes: false, reason: 'Liquidez insuficiente', minEdgePct: roundTo(minEdge * 100, 1) };
+  }
+  if (volume24h < POLY_CONTROL_MIN_VOLUME_24H) {
+    return { passes: false, reason: 'Volumen 24h insuficiente', minEdgePct: roundTo(minEdge * 100, 1) };
+  }
+  if (spread > POLY_CONTROL_MAX_SPREAD) {
+    return { passes: false, reason: 'Spread demasiado alto', minEdgePct: roundTo(minEdge * 100, 1) };
+  }
+  if (totalCost > POLY_CONTROL_MAX_TOTAL_COST) {
+    return { passes: false, reason: 'Costes totales no viables', minEdgePct: roundTo(minEdge * 100, 1) };
+  }
+  if (fillProbability < POLY_CONTROL_MIN_FILL) {
+    return { passes: false, reason: 'Probabilidad de fill baja', minEdgePct: roundTo(minEdge * 100, 1) };
+  }
+  if (executableEdge < minEdge) {
+    return { passes: false, reason: 'Edge ejecutable por debajo del mínimo', minEdgePct: roundTo(minEdge * 100, 1) };
+  }
+  if (!(selectedPrice >= POLY_CONTROL_MIN_ENTRY_PRICE && selectedPrice <= POLY_CONTROL_MAX_ENTRY_PRICE)) {
+    return { passes: false, reason: 'Precio de entrada fuera de rango', minEdgePct: roundTo(minEdge * 100, 1) };
+  }
+  return { passes: true, reason: 'Mantenido: pasa control de ejecución', minEdgePct: roundTo(minEdge * 100, 1) };
 }
 
 function computeStrategyEligibilityFromOpportunity(opportunityLike) {
@@ -1212,15 +1408,34 @@ function buildRealDecisionHorizons(cityDetail, board) {
         continue;
       }
 
-      const modelYesPct = bucketProbabilityYesPct(market, meanC, sigmaC);
+      const horizonDays = resolveHorizonDaysFromKey(realH.key);
+      const calibration = resolveTraderCalibration(cloned.city.id, horizonDays, Number.isFinite(localHour) ? localHour : 12);
+      const calibratedMeanC = Number.isFinite(meanC) ? (meanC + calibration.meanBiasC) : meanC;
+      const calibratedSigmaC = Number.isFinite(sigmaC) ? (sigmaC * calibration.sigmaMultiplier) : sigmaC;
+      const modelYesPct = bucketProbabilityYesPct(
+        market,
+        calibratedMeanC,
+        calibratedSigmaC,
+        calibration.confidenceMultiplier
+      );
       if (!Number.isFinite(modelYesPct)) {
         filteredReasons.data += 1;
         continue;
       }
       const marketYesPct = Number.isFinite(market.marketProbabilityYesPct) ? market.marketProbabilityYesPct : 50;
       const actionSide = modelYesPct >= marketYesPct ? 'YES' : 'NO';
-      const direction = inferDirectionFromMean(market, meanC);
+      const direction = inferDirectionParity(market, calibratedMeanC, actionSide);
       const metrics = computeExecutionMetrics({ market, modelYesPct, marketYesPct, actionSide, horizonKey: realH.key, localHour });
+      const controlDecision = evaluateExecutionControlParity({
+        metrics,
+        market,
+        actionSide,
+        horizonKey: realH.key,
+        localHour
+      });
+      metrics.shouldTrade = controlDecision.passes;
+      metrics.failReason = controlDecision.passes ? null : controlDecision.reason;
+      metrics.execMinPct = controlDecision.minEdgePct;
       const strategyEligible = computeStrategyEligibilityFromOpportunity({
         shouldTrade: metrics.shouldTrade,
         signal: metrics.signal,
