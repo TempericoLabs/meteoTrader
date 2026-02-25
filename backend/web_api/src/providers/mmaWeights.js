@@ -1,6 +1,9 @@
 const DEFAULT_WEIGHTS = Object.freeze({
-  ecmwf_ifs: 0.66,
-  gfs_global: 0.34
+  // Raw base weights inspired by app móvil (ForecastWeights.kt), no normalizados.
+  ecmwf_ifs: 1.30,
+  ecmwf_ifs025: 1.33,
+  ecmwf_aifs025_single: 1.25,
+  gfs_global: 1.05
 });
 
 const CITY_WEIGHTS = Object.freeze({
@@ -20,10 +23,12 @@ const CITY_WEIGHTS = Object.freeze({
   'sao-paulo': { ecmwf_ifs: 0.63, gfs_global: 0.37 }
 });
 
-export const MMA_WEIGHTS_VERSION = 'WEB_MMA_WEIGHTS_V1';
+export const MMA_WEIGHTS_VERSION = 'WEB_MMA_WEIGHTS_V2_PARITY';
 
 export const OPEN_METEO_MODEL_LABELS = Object.freeze({
   ecmwf_ifs: 'Open-Meteo ECMWF IFS',
+  ecmwf_ifs025: 'Open-Meteo ECMWF IFS 0.25',
+  ecmwf_aifs025_single: 'Open-Meteo ECMWF AIFS',
   gfs_global: 'Open-Meteo GFS Global'
 });
 
@@ -32,7 +37,25 @@ function clone(obj) {
 }
 
 export function getCityMmaWeights(cityId) {
-  return clone(CITY_WEIGHTS[cityId] || DEFAULT_WEIGHTS);
+  const city = CITY_WEIGHTS[cityId];
+  if (!city) return clone(DEFAULT_WEIGHTS);
+
+  const ifs = Number.isFinite(Number(city.ecmwf_ifs)) ? Number(city.ecmwf_ifs) : DEFAULT_WEIGHTS.ecmwf_ifs;
+  const gfs = Number.isFinite(Number(city.gfs_global)) ? Number(city.gfs_global) : DEFAULT_WEIGHTS.gfs_global;
+  // Derivamos IFS025/AIFS a partir de IFS para mantener tuning por ciudad y acercarnos al peso relativo del móvil.
+  const ifs025 = Number.isFinite(Number(city.ecmwf_ifs025))
+    ? Number(city.ecmwf_ifs025)
+    : (ifs * (DEFAULT_WEIGHTS.ecmwf_ifs025 / DEFAULT_WEIGHTS.ecmwf_ifs));
+  const aifs = Number.isFinite(Number(city.ecmwf_aifs025_single))
+    ? Number(city.ecmwf_aifs025_single)
+    : (ifs * (DEFAULT_WEIGHTS.ecmwf_aifs025_single / DEFAULT_WEIGHTS.ecmwf_ifs));
+
+  return clone({
+    ecmwf_ifs: ifs,
+    ecmwf_ifs025: ifs025,
+    ecmwf_aifs025_single: aifs,
+    gfs_global: gfs
+  });
 }
 
 export function getOpenMeteoModelLabel(modelKey) {

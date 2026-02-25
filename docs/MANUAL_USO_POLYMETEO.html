@@ -297,7 +297,7 @@
     <section id="indice" class="box toc">
       <h2>Índice</h2>
       <ol>
-        <li><a href="#novedades-v24">Novedades desde la versión anterior (v4.11)</a></li>
+        <li><a href="#novedades-v24">Novedades desde la versión anterior (v4.12)</a></li>
         <li><a href="#capitulo-0">Capítulo 0: Basics de mercados de predicción</a></li>
         <li><a href="#capitulo-1">Capítulo 1: Qué es Polymarket y por qué esta app es clave</a></li>
         <li><a href="#capitulo-2">Capítulo 2: Flujo general de uso (de principiante a operativo)</a></li>
@@ -315,10 +315,11 @@
     </section>
 
     <section id="novedades-v24">
-      <h2>Novedades desde la versión anterior (v4.11)</h2>
+      <h2>Novedades desde la versión anterior (v4.12)</h2>
       <div class="box">
         <h3>Cambios visibles para el usuario</h3>
         <ul>
+          <li><strong>Web local/funcional (Paridad MM/MMA y criterios live):</strong> se aproxima la lógica web a la app móvil en datos críticos de decisión: <strong>MM</strong> web deja de ser media simple y pasa a usar un cálculo tipo <strong>PolyTempCalculator</strong> (pesos base, descarte de outliers y mezcla con modelo dominante), <strong>MMA</strong> web aplica la misma lógica de mezcla sobre pesos backend, se amplía Open-Meteo a <strong>ECMWF IFS + IFS 0.25 + AIFS + GFS</strong>, y se igualan criterios de <strong>invalidación diaria</strong> (epsilon) y <strong>live floor</strong> para hoy. Esto reduce discrepancias fuertes entre móvil y web en <strong>MM/MMA</strong> y en la evaluación de oportunidades cuando ya existe una máxima observada.</li>
           <li><strong>Web local/funcional (Fix Wunderground estación control, prioridad de fuentes):</strong> se ajusta la prioridad del scraping de estación de control para usar primero <strong>Summary (High Temp Actual)</strong> y <strong>PWS actual</strong>, dejando el valor <strong>embedded</strong> solo como <strong>fallback</strong>. Esto evita que payloads embebidos de otras ubicaciones en la página de Wunderground contaminen la máxima diaria mostrada.</li>
           <li><strong>Web local/funcional (Fix Wunderground estación control):</strong> se corrige un bug de parseo en la lectura embebida de Wunderground que podía interpretar valores <strong>imperiales (°F)</strong> como <strong>°C</strong> en la <strong>Temp estación control</strong> de algunas ciudades (ejemplo: Seúl aparecía como <code>39°C</code> en lugar de ~<code>4°C</code>). El parser embedded ahora prioriza unidad imperial por defecto cuando la unidad no viene explícita.</li>
           <li><strong>Infra web (Fase B1.19, publicación funcional en Render preparada):</strong> se añade preparación de despliegue para la <strong>web funcional (backend + frontend)</strong> en un <strong>segundo servicio Render</strong>, manteniendo la <strong>landing pública estática separada</strong>. Incluye blueprint de referencia (<code>render.functional.yaml</code>), guía operativa paso a paso y soporte de ruta persistente configurable para estado Web Push (<code>POLYMETEO_WEBPUSH_STATE_FILE</code>).</li>
@@ -1109,7 +1110,7 @@
     </section>
 
     <p class="version">
-      Manual v4.11 • Última actualización: 25-02-2026 • Feedback: <a href="mailto:digitalclaw8@gmail.com" style="color:#8fc8ff">digitalclaw8@gmail.com</a>
+      Manual v4.12 • Última actualización: 25-02-2026 • Feedback: <a href="mailto:digitalclaw8@gmail.com" style="color:#8fc8ff">digitalclaw8@gmail.com</a>
     </p>
   </div>
 </body>

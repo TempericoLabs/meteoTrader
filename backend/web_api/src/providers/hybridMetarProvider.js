@@ -87,6 +87,46 @@ const OPEN_METEO_COORDS_BY_CITY = {
   'sao-paulo': { lat: -23.448, lon: -46.526 }
 };
 
+const OPEN_METEO_MODELS_MM = ['ecmwf_ifs', 'ecmwf_ifs025', 'ecmwf_aifs025_single', 'gfs_global'];
+const FORECAST_INVALID_EPSILON_C = 0.001;
+const POLYTEMP_VALID_TEMP_MIN_C = -80.0;
+const POLYTEMP_VALID_TEMP_MAX_C = 65.0;
+const PREMIUM_DOMINANT_MIN_SHARE = 0.22;
+const PREMIUM_DOMINANT_TARGET_SHARE = 0.35;
+const PREMIUM_DOMINANT_MIN_RATIO = 1.03;
+const PREMIUM_DOMINANT_TARGET_RATIO = 1.20;
+const PREMIUM_DOMINANT_BASE_ALPHA = 0.45;
+const PREMIUM_DOMINANT_EXTRA_ALPHA = 0.30;
+const PREMIUM_DOMINANT_MAX_ALPHA = 0.75;
+
+const FORECAST_BASE_WEIGHTS_BY_SOURCE_ID = Object.freeze({
+  'openmeteo-ifs025': 1.33,
+  'openmeteo-ifs': 1.30,
+  'openmeteo-aifs': 1.25,
+  'weather-gov': 1.10,
+  'windy-gfs': 1.05,
+  'openweather': 0.85
+});
+
+function openMeteoModelToSourceId(modelKey) {
+  switch (String(modelKey || '')) {
+    case 'ecmwf_ifs':
+      return 'openmeteo-ifs';
+    case 'ecmwf_ifs025':
+      return 'openmeteo-ifs025';
+    case 'ecmwf_aifs025_single':
+      return 'openmeteo-aifs';
+    case 'gfs_global':
+      return 'windy-gfs'; // proxy aproximado en web para mantener escala de pesos del móvil
+    default:
+      return String(modelKey || '');
+  }
+}
+
+function forecastBaseWeightForSourceId(sourceId) {
+  return FORECAST_BASE_WEIGHTS_BY_SOURCE_ID[sourceId] ?? 0.9;
+}
+
 function round1(value) {
   return Math.round(value * 10) / 10;
 }
@@ -530,7 +570,7 @@ async function fetchOpenMeteoMmSnapshot(cityId, zoneId) {
     daily: 'temperature_2m_max',
     forecast_days: '3',
     timezone: zoneId,
-    models: 'ecmwf_ifs,gfs_global'
+    models: OPEN_METEO_MODELS_MM.join(',')
   });
   const url = `https://api.open-meteo.com/v1/forecast?${params.toString()}`;
   const controller = new AbortController();
@@ -558,11 +598,17 @@ async function fetchOpenMeteoMmSnapshot(cityId, zoneId) {
     }
     const dailyMmC = {};
     for (let i = 0; i < dates.length; i += 1) {
-      const values = keys
-        .map((key) => json.daily[key]?.[i])
-        .filter((v) => typeof v === 'number' && Number.isFinite(v));
-      if (!values.length) continue;
-      dailyMmC[dates[i]] = values.reduce((a, b) => a + b, 0) / values.length;
+      const entries = keys
+        .map((key) => ({
+          modelKey: key.replace('temperature_2m_max_', ''),
+          valueC: json.daily[key]?.[i]
+        }))
+        .filter((e) => typeof e.valueC === 'number' && Number.isFinite(e.valueC));
+      if (!entries.length) continue;
+      const mm = computePolyTempLikeFromModelEntries(entries, {});
+      if (Number.isFinite(mm.polyTempC)) {
+        dailyMmC[dates[i]] = mm.polyTempC;
+      }
     }
     return {
       dailyMmC,
@@ -603,16 +649,13 @@ function computeWeightedMmaFromForecast(cityId, forecastSnapshot) {
     const availableForDate = modelKeys.filter((key) => Number.isFinite(dailyByModelC[key]?.[date]));
     if (!availableForDate.length) continue;
     const weights = normalizeWeightsForAvailable(baseWeights, availableForDate);
-    let sum = 0;
-    let totalWeight = 0;
-    for (const key of availableForDate) {
-      const tempC = dailyByModelC[key][date];
-      const w = weights[key] || 0;
-      sum += tempC * w;
-      totalWeight += w;
-    }
-    if (totalWeight > 0) {
-      dailyMmaC[date] = sum / totalWeight;
+    const entries = availableForDate.map((key) => ({
+      modelKey: key,
+      valueC: dailyByModelC[key][date]
+    }));
+    const mma = computePolyTempLikeFromModelEntries(entries, weights);
+    if (Number.isFinite(mma.polyTempC)) {
+      dailyMmaC[date] = mma.polyTempC;
     }
   }
 
@@ -666,6 +709,126 @@ function clamp(value, min, max) {
 function roundTo(value, digits = 1) {
   const p = 10 ** digits;
   return Math.round(value * p) / p;
+}
+
+function median(values) {
+  const arr = (values || []).filter((v) => Number.isFinite(v)).slice().sort((a, b) => a - b);
+  if (!arr.length) return 0;
+  const mid = Math.floor(arr.length / 2);
+  return arr.length % 2 === 0 ? (arr[mid - 1] + arr[mid]) / 2 : arr[mid];
+}
+
+function polyTempBlendWithDominant(samples, dynamicWeightsBySourceId = {}) {
+  if (!Array.isArray(samples) || !samples.length) return null;
+  const weightedSamples = samples.map((sample) => ({
+    sample,
+    weight: Number.isFinite(dynamicWeightsBySourceId?.[sample.sourceId])
+      ? Number(dynamicWeightsBySourceId[sample.sourceId])
+      : forecastBaseWeightForSourceId(sample.sourceId)
+  }));
+
+  const totalWeight = weightedSamples.reduce((acc, it) => acc + (Number.isFinite(it.weight) ? it.weight : 0), 0);
+  const weightedMean = totalWeight > 0
+    ? (weightedSamples.reduce((acc, it) => acc + (it.sample.valueC * it.weight), 0) / totalWeight)
+    : (weightedSamples.reduce((acc, it) => acc + it.sample.valueC, 0) / weightedSamples.length);
+
+  if (!dynamicWeightsBySourceId || !Object.keys(dynamicWeightsBySourceId).length || weightedSamples.length < 2 || totalWeight <= 0) {
+    return weightedMean;
+  }
+
+  const sorted = weightedSamples.slice().sort((a, b) => b.weight - a.weight);
+  const top = sorted[0];
+  const second = sorted[1] || null;
+  const topShare = clamp(top.weight / totalWeight, 0, 1);
+  const dominanceRatio = (!second || second.weight <= 0) ? Number.POSITIVE_INFINITY : (top.weight / second.weight);
+
+  if (topShare < PREMIUM_DOMINANT_MIN_SHARE && dominanceRatio < PREMIUM_DOMINANT_MIN_RATIO) {
+    return weightedMean;
+  }
+
+  const ratioFactor = Number.isFinite(dominanceRatio)
+    ? clamp((dominanceRatio - 1.0) / (PREMIUM_DOMINANT_TARGET_RATIO - 1.0), 0, 1)
+    : 1.0;
+  const shareFactor = clamp(topShare / PREMIUM_DOMINANT_TARGET_SHARE, 0, 1);
+  const alpha = clamp(
+    PREMIUM_DOMINANT_BASE_ALPHA + (PREMIUM_DOMINANT_EXTRA_ALPHA * Math.max(ratioFactor, shareFactor)),
+    PREMIUM_DOMINANT_BASE_ALPHA,
+    PREMIUM_DOMINANT_MAX_ALPHA
+  );
+
+  return (weightedMean * (1 - alpha)) + (top.sample.valueC * alpha);
+}
+
+function computePolyTempLikeFromModelEntries(entries, dynamicWeightsByModel = {}) {
+  const candidates = (entries || [])
+    .filter((entry) => Number.isFinite(entry?.valueC))
+    .filter((entry) => entry.valueC >= POLYTEMP_VALID_TEMP_MIN_C && entry.valueC <= POLYTEMP_VALID_TEMP_MAX_C)
+    .map((entry) => ({
+      sourceId: openMeteoModelToSourceId(entry.modelKey),
+      sourceName: getOpenMeteoModelLabel(entry.modelKey),
+      modelKey: entry.modelKey,
+      valueC: entry.valueC
+    }));
+
+  if (!candidates.length) {
+    return { polyTempC: null, validValuesC: [], warnings: ['MM: sin fuentes válidas'] };
+  }
+
+  const med = median(candidates.map((c) => c.valueC));
+  const absDev = candidates.map((c) => Math.abs(c.valueC - med));
+  const mad = median(absDev);
+  const outlierTolerance = Math.max(1.8, mad * 3.2);
+  const filtered = (candidates.length <= 2
+    ? candidates
+    : candidates.filter((c) => Math.abs(c.valueC - med) <= outlierTolerance)
+  );
+  const effective = filtered.length ? filtered : candidates;
+
+  const dynamicWeightsBySourceId = {};
+  for (const [modelKey, weight] of Object.entries(dynamicWeightsByModel || {})) {
+    dynamicWeightsBySourceId[openMeteoModelToSourceId(modelKey)] = weight;
+  }
+  const weighted = polyTempBlendWithDominant(effective, dynamicWeightsBySourceId);
+  const spread = Math.max(...effective.map((c) => c.valueC)) - Math.min(...effective.map((c) => c.valueC));
+
+  const warnings = [];
+  const outliers = candidates.length - effective.length;
+  if (outliers > 0) warnings.push(`MM: descartados ${outliers} outliers`);
+  if (effective.length < 3) warnings.push(`MM: baja confianza (${effective.length} fuentes)`);
+  if (spread > 5.5) warnings.push(`MM: alta dispersión (${spread.toFixed(1)}°C)`);
+
+  return {
+    polyTempC: Number.isFinite(weighted) ? weighted : null,
+    validValuesC: effective.map((c) => c.valueC),
+    warnings
+  };
+}
+
+function estimateSigmaCFromValues(valuesC) {
+  const values = (valuesC || []).filter((v) => Number.isFinite(v));
+  if (values.length < 2) return 1.8;
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const variance = values.map((v) => (v - mean) ** 2).reduce((a, b) => a + b, 0) / values.length;
+  return clamp(Math.sqrt(variance), 0.9, 4.5);
+}
+
+function isForecastInvalidForTodayWeb(forecastTempC, observedMaxC) {
+  if (!Number.isFinite(forecastTempC) || !Number.isFinite(observedMaxC)) return false;
+  return forecastTempC < (observedMaxC - FORECAST_INVALID_EPSILON_C);
+}
+
+function normalizePolyTempForLiveFloorWeb(preferredForecastC, observedMaxC) {
+  if (!Number.isFinite(preferredForecastC)) return Number.isFinite(observedMaxC) ? observedMaxC : null;
+  if (!Number.isFinite(observedMaxC)) return preferredForecastC;
+  return Math.max(preferredForecastC, observedMaxC);
+}
+
+function normalizeForecastInputsForLiveFloorWeb(forecastTemps, observedMaxC) {
+  const values = (forecastTemps || []).filter((v) => Number.isFinite(v));
+  if (!Number.isFinite(observedMaxC)) return values;
+  if (!values.length) return [observedMaxC];
+  if (values.some((value) => Math.abs(value - observedMaxC) <= FORECAST_INVALID_EPSILON_C)) return values;
+  return [...values, observedMaxC];
 }
 
 function unitToCelsius(value, unit) {
@@ -911,6 +1074,16 @@ function forecastMeansForDate(cityDetail, targetDate) {
   return { mmC, mmaC: Number.isFinite(mmaC) ? mmaC : mmC };
 }
 
+function forecastModelValuesForDate(cityDetail, targetDate) {
+  const byModel = cityDetail?.liveOverlay?.forecast?.dailyByModelC || {};
+  const values = [];
+  for (const modelKey of Object.keys(byModel)) {
+    const v = byModel[modelKey]?.[targetDate];
+    if (Number.isFinite(v)) values.push(v);
+  }
+  return values;
+}
+
 function buildRealDecisionHorizons(cityDetail, board) {
   if (!board?.horizons?.length || !cityDetail?.horizons?.length) return cityDetail;
 
@@ -934,8 +1107,15 @@ function buildRealDecisionHorizons(cityDetail, board) {
     const markets = Array.isArray(realH.markets) ? realH.markets : [];
     const { mmC, mmaC } = forecastMeansForDate(cloned, realH.targetDate);
     const forecastReady = Number.isFinite(mmC) || Number.isFinite(mmaC);
-    const meanC = Number.isFinite(mmaC) ? mmaC : mmC;
-    const sigmaC = sigmaCForHorizon(realH.key);
+    const rawMeanC = Number.isFinite(mmaC) ? mmaC : mmC;
+    const meanC = realH.key === 'today'
+      ? normalizePolyTempForLiveFloorWeb(rawMeanC, observedMaxTodayC)
+      : rawMeanC;
+    const rawForecastInputs = forecastModelValuesForDate(cloned, realH.targetDate);
+    const sigmaInputs = realH.key === 'today'
+      ? normalizeForecastInputsForLiveFloorWeb(rawForecastInputs, observedMaxTodayC)
+      : rawForecastInputs;
+    const sigmaC = sigmaInputs.length ? estimateSigmaCFromValues(sigmaInputs) : sigmaCForHorizon(realH.key);
 
     traces.push({
       stage: 'INPUT',
@@ -947,6 +1127,7 @@ function buildRealDecisionHorizons(cityDetail, board) {
         ? [
             `MM ${Number.isFinite(mmC) ? roundTo(mmC, 1) : '--'}°C`,
             `MMA ${Number.isFinite(mmaC) ? roundTo(mmaC, 1) : '--'}°C`,
+            `Mean usada ${Number.isFinite(meanC) ? roundTo(meanC, 1) : '--'}°C`,
             `Sigma ${roundTo(sigmaC, 1)}°C`
           ]
         : []
@@ -1351,8 +1532,8 @@ function overlayCitySummary(baseCity, metarSnapshot, controlSnapshot = null, for
   const observedMaxC = [currentTempC, controlTempC].filter((v) => Number.isFinite(v));
   if (observedMaxC.length) {
     const maxObserved = Math.max(...observedMaxC);
-    if (Number.isFinite(mmC)) city.summary.mm.invalidToday = mmC < maxObserved - 0.4;
-    if (Number.isFinite(mmaC)) city.summary.mma.invalidToday = mmaC < maxObserved - 0.4;
+    if (Number.isFinite(mmC)) city.summary.mm.invalidToday = isForecastInvalidForTodayWeb(mmC, maxObserved);
+    if (Number.isFinite(mmaC)) city.summary.mma.invalidToday = isForecastInvalidForTodayWeb(mmaC, maxObserved);
   }
 
   const hasWu = controlSnapshot?.tempC != null;
@@ -1388,6 +1569,7 @@ function overlayCitySummary(baseCity, metarSnapshot, controlSnapshot = null, for
       todayMmaC: Number.isFinite(mmaTodayC) ? mmaTodayC : null,
       dailyMmCByDate: forecastSnapshot?.dailyMmC || {},
       dailyMmaCByDate: mmaForecast?.dailyMmaC || {},
+      dailyByModelC: forecastSnapshot?.dailyByModelC || {},
       mmaWeightsVersion: mmaForecast?.source || null,
       mmaWeightsByModel: mmaForecast?.normalizedWeightsByModel || {},
       mmaDominantModelKey: mmaForecast?.dominantModelKey || null,
