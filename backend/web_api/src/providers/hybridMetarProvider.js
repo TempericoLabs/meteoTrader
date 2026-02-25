@@ -430,18 +430,243 @@ function parseWundergroundEmbeddedMax(html, preferredUnit) {
   return best;
 }
 
-function parseWundergroundPwsCurrent(html, preferredUnit) {
-  const text = stripHtmlToText(html);
-  const idx = text.toLowerCase().indexOf('temperature');
-  if (idx < 0) return null;
-  const slice = text.slice(Math.max(0, idx - 80), idx + 220);
-  const m = slice.match(/(-?\d+(?:\.\d+)?)\s*(?:°|º)?\s*([CF])?/i);
-  if (!m) return null;
-  const value = Number(m[1]);
-  const unit = m[2] ? (String(m[2]).toUpperCase() === 'F' ? 'F' : 'C') : inferUnitFromValue(value, preferredUnit);
+function extractInlineScriptsText(html) {
+  if (typeof html !== 'string' || !html) return '';
+  const regex = /<script\b[^>]*>([\s\S]*?)<\/script>/gi;
+  let match;
+  let joined = '';
+  while ((match = regex.exec(html)) !== null) {
+    if (match[1]) joined += `${match[1]}\n`;
+  }
+  return joined;
+}
+
+function parseWundergroundUnitFromContext(context) {
+  const ctx = String(context || '');
+  if (/temperatureUnit[^a-z0-9]{0,16}(?:["'])?F/i.test(ctx)) return 'F';
+  if (/temperatureUnit[^a-z0-9]{0,16}(?:["'])?C/i.test(ctx)) return 'C';
+  if (/(?:[?&]|\\u0026)units=(?:e|imperial)\b/i.test(ctx) || /"units"\s*:\s*"e"/i.test(ctx)) return 'F';
+  if (/(?:[?&]|\\u0026)units=(?:m|metric)\b/i.test(ctx) || /"units"\s*:\s*"m"/i.test(ctx)) return 'C';
+  return null;
+}
+
+function buildWundergroundEmbeddedScore(context, metarCode, unit, key = null) {
+  const ctx = String(context || '');
+  const code = String(metarCode || '').toUpperCase();
+  let score = 0;
+  if (code && new RegExp(`icaoCode=${code}`, 'i').test(ctx)) score += 5;
+  if (code && new RegExp(`"icaoCode"\\s*:\\s*"${code}"`, 'i').test(ctx)) score += 5;
+  if (/v3\/wx\/observations\/current/i.test(ctx)) score += 2;
+  if (key && /temperatureMaxSince7Am/i.test(key)) score += 3;
+  if (key && /temperatureMax24Hour/i.test(key)) score += 2;
+  if (parseWundergroundUnitFromContext(ctx)) score += 2;
+  if (/units=/i.test(ctx) || /"units"\s*:/i.test(ctx)) score += 1;
+  if (unit === 'C' || unit === 'F') score += 1;
+  return score;
+}
+
+function toWuCandidate(value, unit, source, extras = {}) {
+  if (!Number.isFinite(value)) return null;
   if (!isPlausibleTemp(value, unit)) return null;
   const valueC = unit === 'C' ? value : fahrenheitToCelsius(value);
-  return { value, unit, valueC, source: 'pws-current' };
+  if (!Number.isFinite(valueC)) return null;
+  return { value, unit, valueC, source, ...extras };
+}
+
+function findWundergroundEmbeddedObservationHighTemp(text, metarCode, preferredUnit, key) {
+  const regex = new RegExp(`"${key}"\\s*:\\s*(-?\\d+(?:\\.\\d+)?)`, 'gi');
+  const candidates = [];
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const value = Number(match[1]);
+    const start = Math.max(0, match.index - 1200);
+    const end = Math.min(text.length, match.index + 1200);
+    const context = text.slice(start, end);
+    const unit = parseWundergroundUnitFromContext(context) || inferUnitFromValue(value, preferredUnit);
+    const candidate = toWuCandidate(value, unit, `embedded-observation-${key}`, {
+      score: buildWundergroundEmbeddedScore(context, metarCode, unit, key)
+    });
+    if (candidate) candidates.push(candidate);
+  }
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => (b.score - a.score) || (b.valueC - a.valueC));
+  return candidates[0];
+}
+
+function findWundergroundHighTempAfterKeyword(text, preferredUnit) {
+  const index = String(text || '').search(/High\s*Temp/i);
+  if (index < 0) return null;
+  const slice = text.slice(index, Math.min(text.length, index + 260));
+  const m = slice.match(/(-?\d+(?:\.\d+)?)/);
+  if (!m) return null;
+  const value = Number(m[1]);
+  const unit = inferUnitFromValue(value, preferredUnit);
+  return toWuCandidate(value, unit, 'high-temp-keyword');
+}
+
+function findWundergroundAnyEmbeddedMaxTemperature(text, preferredUnit, metarCode) {
+  const regex = /"(temperatureMaxSince7Am|temperatureMax24Hour|temperatureMax)"\s*:\s*(-?\d+(?:\.\d+)?)/gi;
+  const candidates = [];
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const key = match[1];
+    const value = Number(match[2]);
+    const start = Math.max(0, match.index - 120);
+    const end = Math.min(text.length, match.index + 120);
+    const context = text.slice(start, end);
+    const explicitUnit = parseWundergroundUnitFromContext(context);
+    const unit = explicitUnit || inferUnitFromValue(value, preferredUnit);
+    const candidate = toWuCandidate(value, unit, `embedded-fallback-${key}`, {
+      score: buildWundergroundEmbeddedScore(context, metarCode, unit, key) + (explicitUnit ? 1 : 0)
+    });
+    if (candidate) candidates.push(candidate);
+  }
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => (b.score - a.score) || (b.valueC - a.valueC));
+  return candidates[0];
+}
+
+function findWundergroundAnyEmbeddedCurrentTemperature(text, preferredUnit, metarCode) {
+  const regex = /"temperature"\s*:\s*(-?\d+(?:\.\d+)?)/gi;
+  const candidates = [];
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const value = Number(match[1]);
+    const start = Math.max(0, match.index - 120);
+    const end = Math.min(text.length, match.index + 120);
+    const context = text.slice(start, end);
+    const unit = parseWundergroundUnitFromContext(context) || inferUnitFromValue(value, preferredUnit);
+    const candidate = toWuCandidate(value, unit, 'embedded-current-temperature', {
+      score: buildWundergroundEmbeddedScore(context, metarCode, unit, 'temperature')
+    });
+    if (candidate) candidates.push(candidate);
+  }
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => (b.score - a.score) || (b.valueC - a.valueC));
+  return candidates[0];
+}
+
+function extractWundergroundObservationApiUrls(html, metarCode) {
+  const normalized = String(html || '')
+    .replace(/\\\//g, '/')
+    .replace(/\\u0026/g, '&')
+    .replace(/&amp;/gi, '&');
+
+  const regex = /https:\/\/api\.weather\.com\/v3\/wx\/observations\/current\?[^"'\\s>]+/gi;
+  const urls = [];
+  let match;
+  while ((match = regex.exec(normalized)) !== null) {
+    urls.push(match[0]);
+  }
+  return [...new Set(urls)].sort((a, b) => {
+    const score = (candidate) => {
+      if (metarCode && new RegExp(`icaoCode=${metarCode}`, 'i').test(candidate)) return 2;
+      if (/icaoCode=/i.test(candidate)) return 1;
+      return 0;
+    };
+    return score(b) - score(a);
+  });
+}
+
+function buildWundergroundFallbackObservationUrls(cityId, metarCode) {
+  const coords = OPEN_METEO_COORDS_BY_CITY[cityId];
+  const base = 'https://api.weather.com/v3/wx/observations/current';
+  const apiKey = 'e1f10a1e78da46f5b10a1e78da96f525';
+  const urls = [];
+  if (metarCode) {
+    urls.push(`${base}?apiKey=${apiKey}&language=en-US&units=e&format=json&icaoCode=${encodeURIComponent(metarCode)}`);
+    urls.push(`${base}?apiKey=${apiKey}&language=en-US&units=m&format=json&icaoCode=${encodeURIComponent(metarCode)}`);
+  }
+  if (coords) {
+    const geo = `${coords.lat},${coords.lon}`;
+    urls.push(`${base}?apiKey=${apiKey}&language=en-US&units=e&format=json&geocode=${encodeURIComponent(geo)}`);
+    urls.push(`${base}?apiKey=${apiKey}&language=en-US&units=m&format=json&geocode=${encodeURIComponent(geo)}`);
+  }
+  return urls;
+}
+
+function parseWundergroundObservationJson(rawJson, requestUrl, preferredUnit) {
+  let root;
+  try {
+    root = JSON.parse(rawJson);
+  } catch {
+    return null;
+  }
+  const payload = (root && typeof root === 'object' && root.value && typeof root.value === 'object') ? root.value : root;
+  if (!payload || typeof payload !== 'object') return null;
+  const keys = ['temperatureMaxSince7Am', 'temperatureMax24Hour', 'temperatureMax'];
+  let value = null;
+  for (const key of keys) {
+    const v = firstNumber(payload[key]);
+    if (Number.isFinite(v)) {
+      value = v;
+      break;
+    }
+  }
+  if (!Number.isFinite(value)) return null;
+  let unit = null;
+  if (/units=e/i.test(requestUrl)) unit = 'F';
+  else if (/units=m/i.test(requestUrl)) unit = 'C';
+  else unit = inferUnitFromValue(value, preferredUnit);
+  return toWuCandidate(value, unit, 'weather-com-observation-api');
+}
+
+async function fetchWundergroundObservationMaxFromApi({ html, cityId, metarCode, preferredUnit, refererUrl }) {
+  const urls = [
+    ...extractWundergroundObservationApiUrls(html, metarCode),
+    ...buildWundergroundFallbackObservationUrls(cityId, metarCode)
+  ];
+  const uniqueUrls = [...new Set(urls)];
+  for (const url of uniqueUrls) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), WUNDERGROUND_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          accept: 'application/json,text/plain,*/*',
+          'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) PolyMeteoWeb/1.0',
+          referer: refererUrl || 'https://www.wunderground.com/',
+          origin: 'https://www.wunderground.com'
+        }
+      });
+      if (!response.ok) continue;
+      const raw = await response.text();
+      const parsed = parseWundergroundObservationJson(raw, url, preferredUnit);
+      if (parsed) return parsed;
+    } catch {
+      // ignore and continue
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  return null;
+}
+
+async function extractWundergroundHighTempActual(html, { cityId, metarCode, displayUnit, pageUrl }) {
+  const pageText = stripHtmlToText(html);
+  const scriptsJoined = extractInlineScriptsText(html);
+  const summaryRaw = parseWundergroundSummaryHighTemp(pageText, displayUnit);
+  const summary = summaryRaw
+    ? toWuCandidate(summaryRaw.value, summaryRaw.unit, summaryRaw.source)
+    : null;
+
+  const currentCandidate =
+    findWundergroundEmbeddedObservationHighTemp(scriptsJoined, metarCode, displayUnit, 'temperatureMaxSince7Am')
+    || findWundergroundEmbeddedObservationHighTemp(scriptsJoined, metarCode, displayUnit, 'temperatureMax24Hour')
+    || findWundergroundHighTempAfterKeyword(pageText, displayUnit)
+    || findWundergroundAnyEmbeddedMaxTemperature(scriptsJoined, displayUnit, metarCode)
+    || await fetchWundergroundObservationMaxFromApi({
+      html,
+      cityId,
+      metarCode,
+      preferredUnit: displayUnit,
+      refererUrl: pageUrl
+    })
+    || findWundergroundAnyEmbeddedCurrentTemperature(scriptsJoined, displayUnit, metarCode);
+
+  const chosen = chooseHigherTempCandidate(summary, currentCandidate);
+  return { chosen, summary, currentCandidate };
 }
 
 function chooseHigherTempCandidate(...candidates) {
@@ -504,7 +729,7 @@ async function fetchHtml(url, { accept = 'text/html,application/xhtml+xml' } = {
   }
 }
 
-async function fetchWundergroundControlSnapshot(cityId, displayUnit) {
+async function fetchWundergroundControlSnapshot(cityId, displayUnit, metarCode) {
   const cfg = WUNDERGROUND_BY_CITY[cityId];
   if (!cfg) return { tempC: null, sourceUrl: null, error: 'Ciudad sin URL Wunderground configurada' };
 
@@ -522,10 +747,14 @@ async function fetchWundergroundControlSnapshot(cityId, displayUnit) {
       errors.push(`${url} -> ${htmlResp.error}`);
       continue;
     }
-    const pageText = stripHtmlToText(htmlResp.body);
-    const summary = parseWundergroundSummaryHighTemp(pageText, displayUnit);
-    const embedded = parseWundergroundEmbeddedMax(htmlResp.body, displayUnit);
-    const pwsCurrent = kind === 'pws' ? parseWundergroundPwsCurrent(htmlResp.body, displayUnit) : null;
+    const extracted = await extractWundergroundHighTempActual(htmlResp.body, {
+      cityId,
+      metarCode,
+      displayUnit,
+      pageUrl: htmlResp.url || url
+    });
+    const summary = extracted.summary;
+    const embedded = extracted.currentCandidate;
 
     // Paridad con app móvil / criterio de negocio:
     // 1) Si la URL de control ofrece Summary (High Temp Actual), usarla (máxima oficial de control).
@@ -540,7 +769,7 @@ async function fetchWundergroundControlSnapshot(cityId, displayUnit) {
       };
     }
 
-    const localCandidates = [summary, pwsCurrent, embedded]
+    const localCandidates = [summary, embedded]
       .filter(Boolean)
       .map((candidate) => ({
         ...candidate,
@@ -548,9 +777,13 @@ async function fetchWundergroundControlSnapshot(cityId, displayUnit) {
       }));
     const localChosen = choosePreferredWundergroundCandidate(localCandidates);
     if (localChosen) {
-      // Para la URL de control, si no hubo Summary, no devolvemos embedded inmediatamente:
-      // guardamos fallback y dejamos que PWS (si existe) pueda ofrecer un current razonable.
-      if (kind === 'control' && String(localChosen.source || '').startsWith('embedded-')) {
+      // Para la URL de control, si no hubo Summary, guardamos embedded-like fallback y
+      // permitimos que la siguiente URL ofrezca un candidato mejor.
+      if (kind === 'control' && (
+        String(localChosen.source || '').startsWith('embedded-') ||
+        String(localChosen.source || '') === 'high-temp-keyword' ||
+        String(localChosen.source || '') === 'weather-com-observation-api'
+      )) {
         lateFallbackCandidates.push(localChosen);
       } else {
         return {
@@ -1864,7 +2097,7 @@ export function createHybridMetarProvider({ baseProvider = createMockProvider() 
     if (!baseCity) return null;
     const [metarSnapshot, controlSnapshot, forecastSnapshot] = await Promise.all([
       fetchMetarSnapshot(baseCity.city.metarCode),
-      fetchWundergroundControlSnapshot(cityId, baseCity.city.displayUnit),
+      fetchWundergroundControlSnapshot(cityId, baseCity.city.displayUnit, baseCity.city.metarCode),
       fetchOpenMeteoMmSnapshot(cityId, baseCity.city.zoneId)
     ]);
     let cityDetail = overlayCityDetail(baseCity, metarSnapshot, controlSnapshot, forecastSnapshot);

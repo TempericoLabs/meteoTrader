@@ -297,7 +297,7 @@
     <section id="indice" class="box toc">
       <h2>Índice</h2>
       <ol>
-        <li><a href="#novedades-v24">Novedades desde la versión anterior (v4.14)</a></li>
+        <li><a href="#novedades-v24">Novedades desde la versión anterior (v4.15)</a></li>
         <li><a href="#capitulo-0">Capítulo 0: Basics de mercados de predicción</a></li>
         <li><a href="#capitulo-1">Capítulo 1: Qué es Polymarket y por qué esta app es clave</a></li>
         <li><a href="#capitulo-2">Capítulo 2: Flujo general de uso (de principiante a operativo)</a></li>
@@ -315,10 +315,11 @@
     </section>
 
     <section id="novedades-v24">
-      <h2>Novedades desde la versión anterior (v4.14)</h2>
+      <h2>Novedades desde la versión anterior (v4.15)</h2>
       <div class="box">
         <h3>Cambios visibles para el usuario</h3>
         <ul>
+          <li><strong>Web local/funcional (Paridad Wunderground estación control Miami/NY):</strong> se sustituye el parser simplificado de Wunderground en web por un flujo equivalente al de la app móvil para la <strong>Temp estación control (S)</strong>: <strong>Summary (High Temp Actual)</strong> + candidatos embebidos con <strong>scoring por contexto/icaoCode</strong> + fallback a <strong>api.weather.com</strong>. Además, se elimina el parser de texto <em>pws-current</em> (demasiado frágil), que podía producir valores absurdos como <code>117°F</code> en Miami o <code>77°F</code> en Nueva York. Con esto se reduce de forma importante la discrepancia de <strong>S</strong> entre web y app móvil.</li>
           <li><strong>Web local/funcional (Paridad visual grid + Wunderground control):</strong> el grid/lista web vuelve a mostrar métricas rápidas como la app móvil (<strong>M / Δ / S / P</strong>, donde <strong>P = MM</strong>) en lugar de usar <strong>MMA</strong> en la tarjeta de ciudad. Además, la <strong>Temp estación control</strong> web prioriza de forma más estricta la <strong>máxima diaria del Summary (High Temp Actual)</strong> de la URL de control, evitando que un <strong>PWS current</strong> más alto o un embedded fallback sobreescriban la referencia oficial de control cuando sí existe Summary.</li>
           <li><strong>Web local/funcional (Paridad motor de decisión con app móvil):</strong> el backend web alinea la evaluación de mercados con la app móvil al portar la <strong>calibración por ciudad/horizonte/franja (TraderCalibration)</strong> y las fórmulas de <strong>probabilidad calibrada</strong>, <strong>fill</strong>, <strong>costes</strong>, <strong>edge ejecutable</strong>, <strong>señal (GREEN/YELLOW/RED)</strong> y <strong>control de ejecución</strong> (liquidez, volumen 24h, spread, fill, edge mínimo, precio de entrada y reglas de tarde). Esto reduce discrepancias de <strong>BET/PASS</strong>, <strong>OVER/UNDER</strong> y edge entre web y móvil cuando el mercado real y los datos meteo son los mismos.</li>
           <li><strong>Web local/funcional (Paridad MM/MMA y criterios live):</strong> se aproxima la lógica web a la app móvil en datos críticos de decisión: <strong>MM</strong> web deja de ser media simple y pasa a usar un cálculo tipo <strong>PolyTempCalculator</strong> (pesos base, descarte de outliers y mezcla con modelo dominante), <strong>MMA</strong> web aplica la misma lógica de mezcla sobre pesos backend, se amplía Open-Meteo a <strong>ECMWF IFS + IFS 0.25 + AIFS + GFS</strong>, y se igualan criterios de <strong>invalidación diaria</strong> (epsilon) y <strong>live floor</strong> para hoy. Esto reduce discrepancias fuertes entre móvil y web en <strong>MM/MMA</strong> y en la evaluación de oportunidades cuando ya existe una máxima observada.</li>
