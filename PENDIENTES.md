@@ -24,3 +24,6 @@
 - Fase 2 (operativa): integración CLOB para crear/cancelar órdenes desde la app.
 - Requiere: credenciales CLOB (`api key`, `secret`, `passphrase`) y flujo de firma wallet seguro.
 - Seguridad: nunca introducir ni almacenar seed phrase o clave privada en texto plano.
+
+## Web funcional (pendiente próximo bloque)
+- Smoke Test post-deploy (Render): script/checklist automatizado para validar `/healthz`, `/app`, `/api/v1/webpush/config`, carga de CIUDADES/DETALLE, Web Push (`config/subscriptions/audit`) y persistencia tras restart.
