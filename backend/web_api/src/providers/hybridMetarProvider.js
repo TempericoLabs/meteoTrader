@@ -509,9 +509,14 @@ async function fetchWundergroundControlSnapshot(cityId, displayUnit) {
   if (!cfg) return { tempC: null, sourceUrl: null, error: 'Ciudad sin URL Wunderground configurada' };
 
   const errors = [];
-  const collectedCandidates = [];
-  const attempts = [cfg.controlUrl, cfg.pwsUrl].filter(Boolean);
-  for (const url of attempts) {
+  const attempts = [
+    { url: cfg.controlUrl, kind: 'control' },
+    { url: cfg.pwsUrl, kind: 'pws' }
+  ].filter((a) => !!a.url);
+
+  const lateFallbackCandidates = [];
+  for (const attempt of attempts) {
+    const { url, kind } = attempt;
     const htmlResp = await fetchHtml(url);
     if (!htmlResp.ok) {
       errors.push(`${url} -> ${htmlResp.error}`);
@@ -520,29 +525,47 @@ async function fetchWundergroundControlSnapshot(cityId, displayUnit) {
     const pageText = stripHtmlToText(htmlResp.body);
     const summary = parseWundergroundSummaryHighTemp(pageText, displayUnit);
     const embedded = parseWundergroundEmbeddedMax(htmlResp.body, displayUnit);
-    const pwsCurrent = url.includes('/dashboard/pws/') ? parseWundergroundPwsCurrent(htmlResp.body, displayUnit) : null;
+    const pwsCurrent = kind === 'pws' ? parseWundergroundPwsCurrent(htmlResp.body, displayUnit) : null;
 
-    const attach = (candidate) => {
-      if (!candidate) return;
-      collectedCandidates.push({
+    // Paridad con app móvil / criterio de negocio:
+    // 1) Si la URL de control ofrece Summary (High Temp Actual), usarla (máxima oficial de control).
+    // 2) Si no hay Summary, intentar candidates de esa misma URL.
+    // 3) Solo si no se pudo, probar la siguiente URL.
+    if (kind === 'control' && summary) {
+      return {
+        tempC: summary.valueC ?? (summary.unit === 'C' ? summary.value : fahrenheitToCelsius(summary.value)),
+        sourceUrl: htmlResp.url || url,
+        sourceKind: summary.source,
+        error: null
+      };
+    }
+
+    const localCandidates = [summary, pwsCurrent, embedded]
+      .filter(Boolean)
+      .map((candidate) => ({
         ...candidate,
         sourceUrl: htmlResp.url || url
-      });
-    };
-
-    // Recogemos todo y decidimos al final con prioridad global:
-    // Summary (control) > PWS current > embedded (fallback).
-    // Evita que un embedded contaminado en controlUrl impida revisar pwsUrl.
-    attach(summary);
-    attach(pwsCurrent);
-    attach(embedded);
-
-    if (!summary && !pwsCurrent && !embedded) {
+      }));
+    const localChosen = choosePreferredWundergroundCandidate(localCandidates);
+    if (localChosen) {
+      // Para la URL de control, si no hubo Summary, no devolvemos embedded inmediatamente:
+      // guardamos fallback y dejamos que PWS (si existe) pueda ofrecer un current razonable.
+      if (kind === 'control' && String(localChosen.source || '').startsWith('embedded-')) {
+        lateFallbackCandidates.push(localChosen);
+      } else {
+        return {
+          tempC: localChosen.valueC,
+          sourceUrl: localChosen.sourceUrl || htmlResp.url || url,
+          sourceKind: localChosen.source,
+          error: null
+        };
+      }
+    } else {
       errors.push(`${url} -> sin maxima detectable`);
     }
   }
 
-  const chosen = choosePreferredWundergroundCandidate(collectedCandidates);
+  const chosen = choosePreferredWundergroundCandidate(lateFallbackCandidates);
   if (chosen) {
     return {
       tempC: chosen.valueC,

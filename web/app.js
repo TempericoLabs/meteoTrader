@@ -1366,9 +1366,9 @@ function renderCitiesGrid() {
           </div>
           <div class="rookie-city-metrics">
             <span>M ${escapeHtml(city.summary.metar.primary)}</span>
+            <span>Δ ${escapeHtml(city.summary.delta?.display || '--')}</span>
             <span>S ${escapeHtml(city.summary.station.primary)}</span>
-            <span>MM ${escapeHtml(city.summary.mm.primary)}</span>
-            <span class="${city.summary.mma.invalidToday ? 'bad' : 'good'}">MMA ${escapeHtml(city.summary.mma.primary)}</span>
+            <span class="${city.summary.mm.invalidToday ? 'bad' : 'good'}">P ${escapeHtml(city.summary.mm.primary)}</span>
           </div>
           <div class="rookie-city-actions">
             <span class="rookie-cta">${escapeHtml(action)}</span>
@@ -1400,7 +1400,7 @@ function renderCitiesGrid() {
             <div class="city-metric"><b>M</b>--</div>
             <div class="city-metric"><b>Δ</b>--</div>
             <div class="city-metric"><b>S</b>--</div>
-            <div class="city-metric"><b>MMA</b>--</div>
+            <div class="city-metric"><b>P</b>--</div>
           </div>
           <div class="city-market-line neutral">
             <span>CARGANDO DATOS...</span>
@@ -1414,7 +1414,6 @@ function renderCitiesGrid() {
     const horizonTag = strategyHorizonTag(city);
     const tag = horizonTag ? `<span class="city-tag">${escapeHtml(horizonTag)}</span>` : '';
     const mmClass = city.summary.mm.invalidToday ? 'bad' : 'good';
-    const mmaClass = city.summary.mma.invalidToday ? 'bad' : 'good';
     return `
       <article class="city-card ${active ? 'active' : ''} ${city.isClosedBySchedule ? 'closed' : ''}" data-city-id="${city.id}">
         <div class="city-head">
@@ -1425,7 +1424,7 @@ function renderCitiesGrid() {
           <div class="city-metric"><b>M</b>${escapeHtml(city.summary.metar.primary)}</div>
           <div class="city-metric"><b>Δ</b><span class="${city.summary.delta.value === 0 ? '' : city.summary.delta.value > 0 ? 'good' : 'bad'}">${escapeHtml(city.summary.delta.display)}</span></div>
           <div class="city-metric"><b>S</b>${escapeHtml(city.summary.station.primary)}</div>
-          <div class="city-metric"><b>MMA</b><span class="${mmaClass}">${escapeHtml(city.summary.mma.primary)}</span></div>
+          <div class="city-metric"><b>P</b><span class="${mmClass}">${escapeHtml(city.summary.mm.primary)}</span></div>
         </div>
         <div class="city-market-line ${line.cls}">
           <span>${escapeHtml(line.textLeft)}</span>
