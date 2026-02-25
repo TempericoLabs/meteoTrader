@@ -465,6 +465,19 @@ function buildWundergroundEmbeddedScore(context, metarCode, unit, key = null) {
   return score;
 }
 
+function buildWundergroundObservationScoreAppParity(context, metarCode, unit) {
+  const ctx = String(context || '');
+  const code = String(metarCode || '').toUpperCase();
+  let score = 0;
+  if (code && new RegExp(`icaoCode=${code}`, 'i').test(ctx)) score += 5;
+  if (code && new RegExp(`"icaoCode"\\s*:\\s*"${code}"`, 'i').test(ctx)) score += 5;
+  if (/v3\/wx\/observations\/current/i.test(ctx)) score += 2;
+  if (/temperatureMaxSince7Am/i.test(ctx)) score += 1;
+  if (/units=/i.test(ctx)) score += 1;
+  if (unit === 'C' || unit === 'F') score += 1;
+  return score;
+}
+
 function toWuCandidate(value, unit, source, extras = {}) {
   if (!Number.isFinite(value)) return null;
   if (!isPlausibleTemp(value, unit)) return null;
@@ -484,7 +497,8 @@ function findWundergroundEmbeddedObservationHighTemp(text, metarCode, preferredU
     const context = text.slice(start, end);
     const unit = parseWundergroundUnitFromContext(context) || inferUnitFromValue(value, preferredUnit);
     const candidate = toWuCandidate(value, unit, `embedded-observation-${key}`, {
-      score: buildWundergroundEmbeddedScore(context, metarCode, unit, key)
+      // Paridad exacta con app móvil: mismo scoring de candidatos embebidos de observación.
+      score: buildWundergroundObservationScoreAppParity(context, metarCode, unit)
     });
     if (candidate) candidates.push(candidate);
   }
