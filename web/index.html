@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>polyMeteo Web (Fase B1)</title>
+  <meta name="description" content="polyMeteo web scaffold: CIUDADES + DETALLE con API mock para preparar la versión funcional en navegador.">
+  <meta name="theme-color" content="#050b18">
+  <link rel="stylesheet" href="/app/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand-block">
+        <div class="brand-row">
+          <h1>polyMeteo</h1>
+          <span class="badge">Web Fase B1</span>
+        </div>
+        <div id="metaLine" class="meta-line">Cargando metadata...</div>
+      </div>
+      <div class="top-actions">
+        <button id="refreshBtn" class="icon-btn" title="Refrescar datos">⟳</button>
+      </div>
+    </header>
+
+    <section class="toolbar">
+      <div class="toolbar-group">
+        <span class="toolbar-label">Modo</span>
+        <div class="segmented" id="modeSwitch">
+          <button data-mode="expert" class="active">Experto</button>
+          <button data-mode="rookie">Rookie</button>
+        </div>
+      </div>
+      <div class="toolbar-group">
+        <span class="toolbar-label">Estrategia</span>
+        <div class="segmented" id="strategySwitch">
+          <button data-strategy="conservadora">Conservadora</button>
+          <button data-strategy="agresiva" class="active">Agresiva</button>
+        </div>
+      </div>
+      <div id="apiStatus" class="api-status">API mock</div>
+    </section>
+
+    <section class="ticker-wrap">
+      <div class="ticker-label">Ticker</div>
+      <div id="tickerTrack" class="ticker-track">Cargando oportunidades...</div>
+    </section>
+
+    <section class="panel ops-dashboard-panel">
+      <div class="panel-head">
+        <h2>Dashboard operativo</h2>
+        <div class="panel-sub">Estado unificado (web local)</div>
+      </div>
+      <div id="opsDashboardBody" class="ops-dashboard-body">
+        Cargando estado operativo...
+      </div>
+    </section>
+
+    <main class="layout">
+      <section class="panel panel-grid">
+        <div class="panel-head">
+          <h2>CIUDADES</h2>
+          <div id="gridStats" class="panel-sub">--</div>
+        </div>
+        <div id="citiesGrid" class="cities-grid">
+          <div class="skeleton-card">Cargando ciudades...</div>
+        </div>
+      </section>
+
+      <section class="panel panel-detail">
+        <div class="panel-head">
+          <h2 id="detailTitle">DETALLE</h2>
+          <div class="detail-head-actions">
+            <button id="refreshDetailBtn" class="tiny-btn" disabled>Refrescar ciudad</button>
+          </div>
+        </div>
+        <div id="detailBody" class="detail-body empty-state">
+          Selecciona una ciudad del grid para ver DETALLE.
+        </div>
+      </section>
+    </main>
+
+    <section class="aux-layout">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Paper Trading web (local)</h2>
+          <div class="detail-head-actions">
+            <button id="paperClearBtn" class="tiny-btn">Limpiar sim</button>
+          </div>
+        </div>
+        <div id="paperBody" class="detail-body">
+          Cargando simulación local...
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Cuenta Polymarket web</h2>
+          <div class="panel-sub">Lectura por wallet</div>
+        </div>
+        <div class="detail-body">
+          <div class="intel-form">
+            <input id="accountWalletInput" class="intel-input" type="text" placeholder="0x... wallet Polymarket">
+            <button id="accountAnalyzeBtn" class="tiny-btn">Cargar</button>
+            <button id="accountRefreshBtn" class="tiny-btn">Refrescar</button>
+          </div>
+          <div id="accountBody" class="intel-body">
+            Cargando wallet por defecto...
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Intel usuario Polymarket</h2>
+          <div class="panel-sub">Lectura pública</div>
+        </div>
+        <div class="detail-body">
+          <div class="intel-form">
+            <input id="intelUsernameInput" class="intel-input" type="text" placeholder="@ikik111" value="ikik111">
+            <button id="intelAnalyzeBtn" class="tiny-btn">Analizar</button>
+            <button id="intelRefreshBtn" class="tiny-btn">Refrescar</button>
+          </div>
+          <div id="intelBody" class="intel-body">
+            Introduce un usuario y pulsa Analizar.
+          </div>
+          <div class="copytrade-panel">
+            <div class="copytrade-head">
+              <div>
+                <div class="panel-sub" style="font-size:.78rem;">Realtime CopyTrade (SSE)</div>
+                <div id="copytradeStatusLine" class="inline-note">Desactivado.</div>
+              </div>
+              <label class="copytrade-toggle">
+                <span>OFF</span>
+                <input id="copytradeEnabled" type="checkbox">
+              </label>
+            </div>
+            <div class="copytrade-grid">
+              <label class="copytrade-field">
+                <span>Poll (s)</span>
+                <input id="copytradePollSec" type="number" min="2" max="15" step="1" value="3">
+              </label>
+              <label class="copytrade-field">
+                <span>Min BUY</span>
+                <input id="copytradeBuyMin" type="number" min="0" step="1" value="0">
+              </label>
+              <label class="copytrade-field">
+                <span>Min SELL</span>
+                <input id="copytradeSellMin" type="number" min="0" step="1" value="0">
+              </label>
+              <label class="copytrade-check"><input id="copytradeAlertBuys" type="checkbox" checked> Compras</label>
+              <label class="copytrade-check"><input id="copytradeAlertSells" type="checkbox" checked> Ventas</label>
+              <label class="copytrade-check"><input id="copytradeAlertOthers" type="checkbox"> Otros</label>
+              <label class="copytrade-check"><input id="copytradeOnlyWeather" type="checkbox" checked> Solo meteo</label>
+              <label class="copytrade-check"><input id="copytradeOnlyTracked" type="checkbox"> Solo ciudades PolyMeteo</label>
+            </div>
+            <div class="copytrade-actions">
+              <button id="copytradeApplyBtn" class="tiny-btn">Aplicar / reiniciar</button>
+              <button id="copytradeClearAlertsBtn" class="tiny-btn alt">Limpiar alertas</button>
+            </div>
+            <div class="copytrade-notify-row">
+              <label class="copytrade-check"><input id="copytradeBrowserNotify" type="checkbox"> Notif navegador</label>
+              <button id="copytradeNotifyPermBtn" class="tiny-btn alt">Permiso notificaciones</button>
+              <span id="copytradeNotifyStatus" class="inline-note">Permiso: --</span>
+            </div>
+            <div class="copytrade-notify-row">
+              <label class="copytrade-check"><input id="copytradeWebPushEnabled" type="checkbox"> Web Push (SW)</label>
+              <button id="copytradeWebPushSyncBtn" class="tiny-btn alt">Activar / sync push</button>
+              <button id="copytradeWebPushTestBtn" class="tiny-btn alt">Test push</button>
+              <button id="copytradeWebPushOffBtn" class="tiny-btn alt">Desactivar push</button>
+              <span id="copytradeWebPushStatus" class="inline-note">Web Push: --</span>
+            </div>
+            <div id="copytradeStatsLine" class="inline-note">Sin monitor activo.</div>
+            <div id="copytradeAlerts" class="copytrade-alerts">
+              <div class="inline-note">Activa CopyTrade para ver alertas en tiempo real.</div>
+            </div>
+            <div class="copytrade-admin">
+              <div class="copytrade-admin-head">
+                <div class="panel-sub">Backend Web Push (admin)</div>
+                <button id="copytradeWebPushAdminRefreshBtn" class="tiny-btn alt">Refrescar backend</button>
+              </div>
+              <div id="copytradeWebPushAdminBody" class="copytrade-admin-body">
+                <div class="inline-note">Sin datos admin todavía.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </section>
+  </div>
+
+  <script type="module" src="/app/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+services:
+  # Blueprint de referencia para la web funcional (backend + frontend servido en /app)
+  # IMPORTANTE:
+  # - Se mantiene separado del render.yaml de la landing estática.
+  # - Este archivo NO lo consume automáticamente el Blueprint actual de Render.
+  # - Úsalo como plantilla para crear un nuevo Web Service en Render (Node).
+  - type: web
+    name: polymeteo-functional
+    runtime: node
+    rootDir: backend/web_api
+    plan: starter
+    pullRequestPreviewsEnabled: false
+    autoDeploy: false
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: POLYMETEO_WEB_PROVIDER
+        value: hybrid-metar
+      - key: POLYMARKET_WALLET_ADDRESS
+        sync: false
+      - key: POLYMETEO_WEBPUSH_VAPID_PUBLIC_KEY
+        sync: false
+      - key: POLYMETEO_WEBPUSH_VAPID_PRIVATE_KEY
+        sync: false
+      - key: POLYMETEO_WEBPUSH_VAPID_SUBJECT
+        value: mailto:tempericolabs@gmail.com
+      - key: POLYMETEO_WEBPUSH_STATE_FILE
+        value: /var/data/copytrade_webpush_state.json
+
+# Persistencia (recomendado, vía UI Render):
+# - Añadir un Persistent Disk al servicio (1 GB es suficiente para empezar)
+# - Mount path: /var/data
+# - Si no se añade disco persistente, se perderán suscripciones Web Push y auditoría tras deploy/restart.
+
+# Dominio recomendado para separar de la landing pública:
+# - Landing estática: https://polymeteo.caplatemp.xyz
+# - Entorno funcional: https://app.polymeteo.caplatemp.xyz/app

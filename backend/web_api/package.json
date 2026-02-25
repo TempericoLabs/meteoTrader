@@ -1,0 +1,17 @@
+{
+  "name": "polymeteo-web-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "polyMeteo web API scaffold (Fase B1) - mock endpoints and static web serving",
+  "scripts": {
+    "dev": "node src/server.js",
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
+  }
+}

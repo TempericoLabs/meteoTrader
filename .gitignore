@@ -7,3 +7,5 @@
 /captures
 .externalNativeBuild
 .cxx
+node_modules/
+backend/web_api/data/
