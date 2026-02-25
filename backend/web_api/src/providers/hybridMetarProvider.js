@@ -453,7 +453,11 @@ async function fetchWundergroundControlSnapshot(cityId, displayUnit) {
     const summary = parseWundergroundSummaryHighTemp(pageText, displayUnit);
     const embedded = parseWundergroundEmbeddedMax(htmlResp.body, displayUnit);
     const pwsCurrent = url.includes('/dashboard/pws/') ? parseWundergroundPwsCurrent(htmlResp.body, displayUnit) : null;
-    const chosen = chooseHigherTempCandidate(summary, embedded, pwsCurrent);
+    // Prioridad: Summary (High Temp Actual) + PWS actual. El embedded de WU se usa solo como fallback,
+    // porque el HTML puede incluir payloads de otras ubicaciones y contaminar la máxima.
+    const primaryChosen = chooseHigherTempCandidate(summary, pwsCurrent);
+    const fallbackChosen = chooseHigherTempCandidate(embedded, pwsCurrent);
+    const chosen = primaryChosen || fallbackChosen;
     if (chosen) {
       return {
         tempC: chosen.valueC,
