@@ -496,9 +496,13 @@ function findWundergroundEmbeddedObservationHighTemp(text, metarCode, preferredU
     const end = Math.min(text.length, match.index + 1200);
     const context = text.slice(start, end);
     const unit = parseWundergroundUnitFromContext(context) || inferUnitFromValue(value, preferredUnit);
+    const hasIcaoEq = !!(metarCode && new RegExp(`icaoCode=${String(metarCode || '').toUpperCase()}`, 'i').test(context));
+    const hasIcaoJson = !!(metarCode && new RegExp(`"icaoCode"\\s*:\\s*"${String(metarCode || '').toUpperCase()}"`, 'i').test(context));
     const candidate = toWuCandidate(value, unit, `embedded-observation-${key}`, {
       // Paridad exacta con app móvil: mismo scoring de candidatos embebidos de observación.
-      score: buildWundergroundObservationScoreAppParity(context, metarCode, unit)
+      score: buildWundergroundObservationScoreAppParity(context, metarCode, unit),
+      hasIcaoEq,
+      hasIcaoJson
     });
     if (candidate) candidates.push(candidate);
   }
@@ -665,18 +669,43 @@ async function extractWundergroundHighTempActual(html, { cityId, metarCode, disp
     ? toWuCandidate(summaryRaw.value, summaryRaw.unit, summaryRaw.source)
     : null;
 
-  const currentCandidate =
-    findWundergroundEmbeddedObservationHighTemp(scriptsJoined, metarCode, displayUnit, 'temperatureMaxSince7Am')
-    || findWundergroundEmbeddedObservationHighTemp(scriptsJoined, metarCode, displayUnit, 'temperatureMax24Hour')
-    || findWundergroundHighTempAfterKeyword(pageText, displayUnit)
-    || findWundergroundAnyEmbeddedMaxTemperature(scriptsJoined, displayUnit, metarCode)
-    || await fetchWundergroundObservationMaxFromApi({
+  const embeddedObsCandidates = [
+    findWundergroundEmbeddedObservationHighTemp(scriptsJoined, metarCode, displayUnit, 'temperatureMaxSince7Am'),
+    findWundergroundEmbeddedObservationHighTemp(scriptsJoined, metarCode, displayUnit, 'temperatureMax24Hour')
+  ].filter(Boolean);
+  const embeddedObsBest = embeddedObsCandidates
+    .slice()
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || b.valueC - a.valueC)[0] || null;
+
+  const apiObservationCandidate = await fetchWundergroundObservationMaxFromApi({
       html,
       cityId,
       metarCode,
       preferredUnit: displayUnit,
       refererUrl: pageUrl
-    })
+    });
+
+  // En páginas WU con payloads mezclados, los candidatos embebidos pueden venir de otra ciudad.
+  // Si el embedded no tiene suficiente evidencia (score bajo) y sí tenemos API de observación
+  // explícita (icaoCode/geocode de la ciudad), preferimos la API.
+  let primaryObservationCandidate = embeddedObsBest;
+  if (apiObservationCandidate) {
+    const embeddedScore = embeddedObsBest?.score ?? -1;
+    const embeddedHasIcao = !!(embeddedObsBest?.hasIcaoEq || embeddedObsBest?.hasIcaoJson);
+    if (!embeddedObsBest || embeddedHasIcao || embeddedScore >= 8) {
+      // Si embedded está bien anclado a la ciudad y puntúa alto, mantenemos paridad de orden.
+      primaryObservationCandidate = embeddedObsBest;
+    } else {
+      // Embedded dudoso: priorizar API weather.com de la ciudad.
+      primaryObservationCandidate = apiObservationCandidate;
+    }
+  }
+
+  const currentCandidate =
+    primaryObservationCandidate
+    || findWundergroundHighTempAfterKeyword(pageText, displayUnit)
+    || findWundergroundAnyEmbeddedMaxTemperature(scriptsJoined, displayUnit, metarCode)
+    || apiObservationCandidate
     || findWundergroundAnyEmbeddedCurrentTemperature(scriptsJoined, displayUnit, metarCode);
 
   const chosen = chooseHigherTempCandidate(summary, currentCandidate);
