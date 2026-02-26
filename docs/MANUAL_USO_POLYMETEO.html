@@ -297,7 +297,7 @@
     <section id="indice" class="box toc">
       <h2>Índice</h2>
       <ol>
-        <li><a href="#novedades-v24">Novedades desde la versión anterior (v4.18)</a></li>
+        <li><a href="#novedades-v24">Novedades desde la versión anterior (v4.19)</a></li>
         <li><a href="#capitulo-0">Capítulo 0: Basics de mercados de predicción</a></li>
         <li><a href="#capitulo-1">Capítulo 1: Qué es Polymarket y por qué esta app es clave</a></li>
         <li><a href="#capitulo-2">Capítulo 2: Flujo general de uso (de principiante a operativo)</a></li>
@@ -315,10 +315,11 @@
     </section>
 
     <section id="novedades-v24">
-      <h2>Novedades desde la versión anterior (v4.18)</h2>
+      <h2>Novedades desde la versión anterior (v4.19)</h2>
       <div class="box">
         <h3>Cambios visibles para el usuario</h3>
         <ul>
+          <li><strong>Web local/funcional (Paridad MMA premium dinámica, engine Android en backend web):</strong> la <strong>MMA</strong> web pasa a calcular pesos por <strong>ciudad + horizonte (H0/H1/H2)</strong> con un motor premium dinámico en backend que replica las fórmulas del engine Android (ranking por error, multiplicadores, blending entre horizontes, no-data multiplier y pesos base). Usa datos históricos de <strong>Open‑Meteo Historical Forecast / Previous Runs / Archive</strong> y mantiene <strong>caché persistente</strong> por ciudad+horizonte para evitar recomputar en cada carga.</li>
           <li><strong>Web local/funcional (Paridad Wunderground, fallback fiable por ciudad):</strong> se añade una regla de fiabilidad para la <strong>Temp estación control (S)</strong> cuando Wunderground devuelve muchos payloads embebidos mezclados. Si el candidato embebido de observación tiene <strong>score bajo</strong> y no está bien anclado al <strong>ICAO</strong> de la ciudad, la web prioriza el fallback de <strong>observación weather.com</strong> (geocode/icaoCode de la ciudad) antes de usar ese embedded dudoso. Esto reduce desalineaciones como Buenos Aires (web mostrando una máxima demasiado baja) y mejora la paridad con la app móvil.</li>
           <li><strong>Web local/funcional (Paridad fina Wunderground, scoring de embedded):</strong> se alinea al 100% con la app móvil el <strong>scoring de candidatos embebidos de observación</strong> (Wunderground / weather.com) usados para calcular la <strong>Temp estación control (S)</strong> cuando no hay Summary utilizable. Esto corrige casos de selección de candidato incorrecto en ciudades con payloads mezclados (por ejemplo Buenos Aires), donde la web podía escoger máximas de otra localización embebida en la misma página.</li>
           <li><strong>Web local/funcional (Paridad fina Wunderground, unidades en embedded):</strong> se alinea el parser de unidad de candidatos embebidos con la app móvil para usar solo pistas <code>units=e/m</code> del contexto inmediato (y no <code>temperatureUnit</code>, que puede venir mezclado de payloads vecinos). Esto corrige desalineaciones de <strong>Temp estación control (S)</strong> en algunas ciudades (por ejemplo Buenos Aires) donde la web podía interpretar mal la unidad y seleccionar un máximo diario incorrecto.</li>
@@ -1116,7 +1117,7 @@
     </section>
 
     <p class="version">
-      Manual v4.14 • Última actualización: 25-02-2026 • Feedback: <a href="mailto:digitalclaw8@gmail.com" style="color:#8fc8ff">digitalclaw8@gmail.com</a>
+      Manual v4.19 • Última actualización: 25-02-2026 • Feedback: <a href="mailto:digitalclaw8@gmail.com" style="color:#8fc8ff">digitalclaw8@gmail.com</a>
     </p>
   </div>
 </body>

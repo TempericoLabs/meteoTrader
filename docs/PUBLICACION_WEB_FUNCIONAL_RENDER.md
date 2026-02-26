@@ -100,6 +100,10 @@ Añade estas variables (Environment):
 
 - `POLYMETEO_WEBPUSH_STATE_FILE=/var/data/copytrade_webpush_state.json`
 
+### Recomendadas para persistencia de calibración MMA premium (si usas disco)
+
+- `POLYMETEO_MMA_PREMIUM_STATE_FILE=/var/data/web_mma_premium_state.json`
+
 ## Paso 4. Añadir Persistent Disk (muy recomendable)
 
 En el servicio Render:
@@ -115,6 +119,7 @@ Esto permite conservar:
 - suscripciones Web Push
 - configuración CopyTrade por suscripción
 - auditoría backend
+- caché de calibración MMA premium por ciudad/horizonte
 
 ## Paso 5. Primer deploy y pruebas técnicas
 
@@ -207,4 +212,3 @@ Para endurecer producción:
 2. Coordinación de monitores (si escalas a varias instancias)
 3. Observabilidad (logs/metricas/alertas)
 4. Separación de entornos (`staging` vs `prod`)
-

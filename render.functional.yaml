@@ -29,11 +29,13 @@ services:
         value: mailto:tempericolabs@gmail.com
       - key: POLYMETEO_WEBPUSH_STATE_FILE
         value: /var/data/copytrade_webpush_state.json
+      - key: POLYMETEO_MMA_PREMIUM_STATE_FILE
+        value: /var/data/web_mma_premium_state.json
 
 # Persistencia (recomendado, vía UI Render):
 # - Añadir un Persistent Disk al servicio (1 GB es suficiente para empezar)
 # - Mount path: /var/data
-# - Si no se añade disco persistente, se perderán suscripciones Web Push y auditoría tras deploy/restart.
+# - Si no se añade disco persistente, se perderán suscripciones Web Push, auditoría y caché de calibración MMA premium tras deploy/restart.
 
 # Dominio recomendado para separar de la landing pública:
 # - Landing estática: https://polymeteo.caplatemp.xyz

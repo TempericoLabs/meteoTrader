@@ -6,6 +6,11 @@ import {
   getOpenMeteoModelLabel,
   normalizeWeightsForAvailable
 } from './mmaWeights.js';
+import {
+  MMA_PREMIUM_ENGINE_VERSION,
+  getPremiumWeightsBundleForCity,
+  providerWeightsToModelWeights
+} from './mmaPremiumEngine.js';
 
 const METAR_API_BASE = 'https://aviationweather.gov/api/data/metar';
 const WUNDERGROUND_TIMEOUT_MS = 5000;
@@ -232,6 +237,14 @@ function todayIsoInZone(zoneId) {
   } catch {
     return new Date().toISOString().slice(0, 10);
   }
+}
+
+function dayDiffIso(fromIso, toIso) {
+  if (typeof fromIso !== 'string' || typeof toIso !== 'string') return 0;
+  const a = Date.parse(`${fromIso}T00:00:00Z`);
+  const b = Date.parse(`${toIso}T00:00:00Z`);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
+  return Math.round((b - a) / 86400000);
 }
 
 function hoursAgoFromInstant(isoInstant) {
@@ -923,7 +936,7 @@ async function fetchOpenMeteoMmSnapshot(cityId, zoneId) {
   }
 }
 
-function computeWeightedMmaFromForecast(cityId, forecastSnapshot) {
+function computeWeightedMmaFromForecastStatic(cityId, forecastSnapshot) {
   const dailyByModelC = forecastSnapshot?.dailyByModelC || {};
   const modelKeys = Object.keys(dailyByModelC).filter((key) => dailyByModelC[key] && typeof dailyByModelC[key] === 'object');
   if (!modelKeys.length) {
@@ -967,6 +980,95 @@ function computeWeightedMmaFromForecast(cityId, forecastSnapshot) {
     dominantModelKey: dominantEntry?.[0] || null,
     dominantWeightPct: dominantEntry ? round1(dominantEntry[1] * 100) : null,
     source: MMA_WEIGHTS_VERSION
+  };
+}
+
+async function computeWeightedMmaFromForecast(cityId, zoneId, forecastSnapshot, options = {}) {
+  const dailyByModelC = forecastSnapshot?.dailyByModelC || {};
+  const modelKeys = Object.keys(dailyByModelC).filter((key) => dailyByModelC[key] && typeof dailyByModelC[key] === 'object');
+  if (!modelKeys.length) {
+    return {
+      dailyMmaC: {},
+      normalizedWeightsByModel: {},
+      dominantModelKey: null,
+      dominantWeightPct: null,
+      source: MMA_PREMIUM_ENGINE_VERSION,
+      cacheStatus: 'NO_MODELS',
+      byHorizon: {}
+    };
+  }
+
+  const coords = OPEN_METEO_COORDS_BY_CITY[cityId];
+  const providerIds = modelKeys.map((modelKey) => openMeteoModelToSourceId(modelKey));
+  const premiumMode = options?.premiumMode === 'ensure' ? 'ensure' : 'cache-only';
+
+  let premiumBundle = null;
+  if (coords) {
+    premiumBundle = await getPremiumWeightsBundleForCity({
+      cityId,
+      zoneId,
+      lat: coords.lat,
+      lon: coords.lon,
+      providerIds,
+      mode: premiumMode
+    });
+  }
+
+  const staticFallback = computeWeightedMmaFromForecastStatic(cityId, forecastSnapshot);
+  const allDates = new Set();
+  for (const key of modelKeys) {
+    Object.keys(dailyByModelC[key] || {}).forEach((date) => allDates.add(date));
+  }
+
+  const todayIso = todayIsoInZone(zoneId);
+  const byHorizon = {};
+  const dailyMmaC = {};
+  for (const date of allDates) {
+    const horizonDays = clamp(dayDiffIso(todayIso, date), 0, 2);
+    const horizonEntry = premiumBundle?.horizons?.[horizonDays] || null;
+    const availableForDate = modelKeys.filter((key) => Number.isFinite(dailyByModelC[key]?.[date]));
+    if (!availableForDate.length) continue;
+    const dynamicByModel = horizonEntry
+      ? providerWeightsToModelWeights(horizonEntry.weightsByProviderId)
+      : {};
+    const fallbackByModel = staticFallback.normalizedWeightsByModel || {};
+    const dynamicWeightsRaw = {};
+    for (const mk of availableForDate) {
+      if (Number.isFinite(dynamicByModel[mk])) dynamicWeightsRaw[mk] = dynamicByModel[mk];
+      else if (Number.isFinite(fallbackByModel[mk])) dynamicWeightsRaw[mk] = fallbackByModel[mk];
+    }
+    const weightsForDate = normalizeWeightsForAvailable(dynamicWeightsRaw, availableForDate);
+    const entries = availableForDate.map((key) => ({ modelKey: key, valueC: dailyByModelC[key][date] }));
+    const mma = computePolyTempLikeFromModelEntries(entries, weightsForDate);
+    if (Number.isFinite(mma.polyTempC)) {
+      dailyMmaC[date] = mma.polyTempC;
+    }
+    if (!byHorizon[horizonDays]) {
+      const dominantEntry = Object.entries(weightsForDate).sort((a, b) => b[1] - a[1])[0] || null;
+      byHorizon[horizonDays] = {
+        horizonDays,
+        normalizedWeightsByModel: weightsForDate,
+        dominantModelKey: dominantEntry?.[0] || null,
+        dominantWeightPct: dominantEntry ? round1(dominantEntry[1] * 100) : null,
+        verifiedDays: Number.isFinite(Number(horizonEntry?.verifiedDays)) ? Number(horizonEntry.verifiedDays) : 0,
+        lastVerifiedDateIso: horizonEntry?.lastVerifiedDateIso || null,
+        calibrationReady: horizonEntry?.calibrationReady === true,
+        calibrationProgress: Number.isFinite(Number(horizonEntry?.calibrationProgress)) ? Number(horizonEntry.calibrationProgress) : 0,
+        warnings: Array.isArray(horizonEntry?.warnings) ? horizonEntry.warnings : []
+      };
+    }
+  }
+
+  const todayHorizon = byHorizon[0] || null;
+  return {
+    dailyMmaC,
+    normalizedWeightsByModel: todayHorizon?.normalizedWeightsByModel || staticFallback.normalizedWeightsByModel || {},
+    dominantModelKey: todayHorizon?.dominantModelKey || staticFallback.dominantModelKey || null,
+    dominantWeightPct: todayHorizon?.dominantWeightPct ?? staticFallback.dominantWeightPct ?? null,
+    source: premiumBundle?.source || staticFallback.source || MMA_WEIGHTS_VERSION,
+    cacheStatus: premiumBundle?.cacheStatus || 'FALLBACK_STATIC',
+    byHorizon,
+    auditTail: premiumBundle?.auditTail || []
   };
 }
 
@@ -1978,7 +2080,7 @@ function toCitySummaryPayload(cityDetail) {
   };
 }
 
-function overlayCitySummary(baseCity, metarSnapshot, controlSnapshot = null, forecastSnapshot = null) {
+function overlayCitySummary(baseCity, metarSnapshot, controlSnapshot = null, forecastSnapshot = null, mmaForecast = null) {
   const city = deepClone(baseCity);
   city.localTime = nowLocalTimeString(city.city.zoneId);
   city.generatedAtUtc = new Date().toISOString();
@@ -2011,7 +2113,6 @@ function overlayCitySummary(baseCity, metarSnapshot, controlSnapshot = null, for
 
   const todayIso = todayIsoInZone(city.city.zoneId);
   const mmTodayC = forecastSnapshot?.dailyMmC?.[todayIso];
-  const mmaForecast = computeWeightedMmaFromForecast(city.id, forecastSnapshot);
   const mmaTodayC = mmaForecast?.dailyMmaC?.[todayIso];
   if (Number.isFinite(mmTodayC)) {
     city.summary.mm = {
@@ -2032,8 +2133,8 @@ function overlayCitySummary(baseCity, metarSnapshot, controlSnapshot = null, for
       ...(city.premium || {}),
       dominantModel: getOpenMeteoModelLabel(mmaForecast.dominantModelKey),
       dominantWeightPct: mmaForecast.dominantWeightPct ?? city.premium?.dominantWeightPct ?? null,
-      source: MMA_WEIGHTS_VERSION,
-      cacheStatus: 'CACHED',
+      source: mmaForecast?.source || MMA_WEIGHTS_VERSION,
+      cacheStatus: mmaForecast?.cacheStatus || 'CACHED',
       updatedAtLocal: formatLocalDateTime(new Date().toISOString(), city.city.zoneId) || city.premium?.updatedAtLocal
     };
   } else if (forecastSnapshot?.error) {
@@ -2087,14 +2188,16 @@ function overlayCitySummary(baseCity, metarSnapshot, controlSnapshot = null, for
       mmaWeightsVersion: mmaForecast?.source || null,
       mmaWeightsByModel: mmaForecast?.normalizedWeightsByModel || {},
       mmaDominantModelKey: mmaForecast?.dominantModelKey || null,
+      mmaCacheStatus: mmaForecast?.cacheStatus || null,
+      mmaByHorizon: mmaForecast?.byHorizon || {},
       error: forecastSnapshot.error || null
     };
   }
   return city;
 }
 
-function overlayCityDetail(baseCity, metarSnapshot, controlSnapshot = null, forecastSnapshot = null) {
-  const city = overlayCitySummary(baseCity, metarSnapshot, controlSnapshot, forecastSnapshot);
+function overlayCityDetail(baseCity, metarSnapshot, controlSnapshot = null, forecastSnapshot = null, mmaForecast = null) {
+  const city = overlayCitySummary(baseCity, metarSnapshot, controlSnapshot, forecastSnapshot, mmaForecast);
   if (!metarSnapshot?.current || metarSnapshot.current.tempC == null) {
     return city;
   }
@@ -2135,7 +2238,7 @@ export function createHybridMetarProvider({ baseProvider = createMockProvider() 
   const detailCache = new Map();
   const detailInflight = new Map();
 
-  async function buildComputedCityDetail(cityId) {
+  async function buildComputedCityDetail(cityId, { premiumMode = 'cache-only' } = {}) {
     const baseCity = await baseProvider.getCityDetail(cityId);
     if (!baseCity) return null;
     const [metarSnapshot, controlSnapshot, forecastSnapshot] = await Promise.all([
@@ -2143,7 +2246,8 @@ export function createHybridMetarProvider({ baseProvider = createMockProvider() 
       fetchWundergroundControlSnapshot(cityId, baseCity.city.displayUnit, baseCity.city.metarCode),
       fetchOpenMeteoMmSnapshot(cityId, baseCity.city.zoneId)
     ]);
-    let cityDetail = overlayCityDetail(baseCity, metarSnapshot, controlSnapshot, forecastSnapshot);
+    const mmaForecast = await computeWeightedMmaFromForecast(cityId, baseCity.city.zoneId, forecastSnapshot, { premiumMode });
+    let cityDetail = overlayCityDetail(baseCity, metarSnapshot, controlSnapshot, forecastSnapshot, mmaForecast);
     try {
       const board = await fetchPolymarketBoardsForCity({
         id: cityDetail.city.id,
@@ -2161,29 +2265,30 @@ export function createHybridMetarProvider({ baseProvider = createMockProvider() 
     return cityDetail;
   }
 
-  async function getComputedCityDetailCached(cityId) {
+  async function getComputedCityDetailCached(cityId, { cacheScope = 'summary', premiumMode = 'cache-only' } = {}) {
+    const cacheKey = `${cacheScope}:${cityId}`;
     const now = Date.now();
-    const cached = detailCache.get(cityId);
+    const cached = detailCache.get(cacheKey);
     if (cached && now - cached.ts <= DETAIL_CACHE_TTL_MS) {
       return deepClone(cached.value);
     }
-    if (detailInflight.has(cityId)) {
-      const inflightValue = await detailInflight.get(cityId);
+    if (detailInflight.has(cacheKey)) {
+      const inflightValue = await detailInflight.get(cacheKey);
       return inflightValue ? deepClone(inflightValue) : null;
     }
     const p = (async () => {
-      const value = await buildComputedCityDetail(cityId);
+      const value = await buildComputedCityDetail(cityId, { premiumMode });
       if (value) {
-        detailCache.set(cityId, { ts: Date.now(), value: deepClone(value) });
+        detailCache.set(cacheKey, { ts: Date.now(), value: deepClone(value) });
       }
       return value;
     })();
-    detailInflight.set(cityId, p);
+    detailInflight.set(cacheKey, p);
     try {
       const value = await p;
       return value ? deepClone(value) : null;
     } finally {
-      detailInflight.delete(cityId);
+      detailInflight.delete(cacheKey);
     }
   }
 
@@ -2222,7 +2327,7 @@ export function createHybridMetarProvider({ baseProvider = createMockProvider() 
     },
 
     async getCitySummary(cityId) {
-      const detail = await getComputedCityDetailCached(cityId);
+      const detail = await getComputedCityDetailCached(cityId, { cacheScope: 'summary', premiumMode: 'cache-only' });
       return detail ? toCitySummaryPayload(detail) : null;
     },
 
@@ -2236,7 +2341,7 @@ export function createHybridMetarProvider({ baseProvider = createMockProvider() 
     },
 
     async getCityDetail(cityId) {
-      return getComputedCityDetailCached(cityId);
+      return getComputedCityDetailCached(cityId, { cacheScope: 'detail', premiumMode: 'ensure' });
     }
   };
 }
