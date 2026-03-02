@@ -424,6 +424,27 @@ function fmtUsd(value) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(value);
 }
 
+function toNum(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function stationTempDisplay(stationValue, displayUnit, { truncate = false, decimals = 1 } = {}) {
+  const raw = displayUnit === 'F' ? toNum(stationValue?.tempF) : toNum(stationValue?.tempC);
+  if (raw == null) return 'No se pudo obtener dato';
+  if (truncate) return `${Math.trunc(raw)}°${displayUnit}`;
+  return `${raw.toFixed(decimals)}°${displayUnit}`;
+}
+
+function stationDeviationInfo(deviationC, displayUnit) {
+  const rawC = toNum(deviationC);
+  if (rawC == null) return { text: 'No se pudo obtener dato', cls: '' };
+  const value = displayUnit === 'F' ? (rawC * 9) / 5 : rawC;
+  const sign = value > 0.0001 ? '+' : value < -0.0001 ? '' : '±';
+  const cls = Math.abs(value) <= 0.0001 ? '' : value > 0 ? 'good' : 'bad';
+  return { text: `${sign}${value.toFixed(1)}°${displayUnit}`, cls };
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -1641,6 +1662,25 @@ function renderDetail() {
     .sort((a, b) => (b.executableEdgePct ?? -999) - (a.executableEdgePct ?? -999))[0]
     || null;
   const realBoardHorizon = city.polymarketReal?.horizons?.find((h) => h.key === selectedHorizon.key);
+  const stationCmp = city.stationComparison || null;
+  const stationDisplayUnit = city.city.displayUnit || 'C';
+  const stationControlCurrent = stationTempDisplay(stationCmp?.controlCurrent, stationDisplayUnit, { truncate: true });
+  const stationControlMax = stationTempDisplay(stationCmp?.controlMax, stationDisplayUnit, { truncate: true });
+  const stationNearbyCurrent = stationTempDisplay(stationCmp?.nearbyCurrent, stationDisplayUnit, { decimals: 1 });
+  const stationNearbyMax = stationTempDisplay(stationCmp?.nearbyMax, stationDisplayUnit, { decimals: 1 });
+  const stationDeviationCurrent = stationDeviationInfo(stationCmp?.deviationCurrentC, stationDisplayUnit);
+  const stationDeviationMax = stationDeviationInfo(stationCmp?.deviationMaxC, stationDisplayUnit);
+  const stationWarnings = [
+    ...(Array.isArray(stationCmp?.warnings) ? stationCmp.warnings : []),
+    ...(stationCmp?.isCurrentDeviationReliable === false && stationCmp?.deviationCurrentC != null
+      ? ['Desviación ACTUAL > 5°C: no se toma en cuenta hasta validar scraping.']
+      : []),
+    ...(stationCmp?.isMaxDeviationReliable === false && stationCmp?.deviationMaxC != null
+      ? ['Desviación MAXIMA > 5°C: no se toma en cuenta hasta validar scraping.']
+      : [])
+  ];
+  const stationControlUrl = stationCmp?.controlSourceUrl || city.city.wundergroundControlUrl || '';
+  const stationNearbyUrl = stationCmp?.nearbySourceUrl || city.city.wundergroundPwsUrl || '';
 
   const headerHtml = `
     <section class="detail-card">
@@ -1656,6 +1696,41 @@ function renderDetail() {
       </div>
       <div class="inline-note" style="margin-top:8px;">Modelo dominante histórico: ${escapeHtml(city.premium.dominantModel)} · Peso ${fmtPct(city.premium.dominantWeightPct)} · Cache ${escapeHtml(city.premium.cacheStatus)}</div>
       ${state.mode === 'rookie' ? `<div class="rookie-help">Lectura rápida: compara <strong>MMA</strong> con la temperatura ya observada y revisa primero los mercados en verde del horizonte seleccionado.</div>` : ''}
+    </section>
+  `;
+
+  const stationComparisonHtml = `
+    <section class="detail-card">
+      <div class="detail-topline">
+        <div>
+          <div class="panel-sub">COMPARATIVA ESTACIONES</div>
+          <div class="inline-note">${escapeHtml(city.city.name)} · ${escapeHtml(city.city.metarCode)} · Hora local ${escapeHtml(city.localTime)}</div>
+        </div>
+        <button class="tiny-btn js-refresh-station-comparison" ${state.loadingDetail ? 'disabled' : ''}>Actualizar comparativa</button>
+      </div>
+      <div class="metrics-grid">
+        <div class="kv"><div class="kv-label">Temp CONTROL ACTUAL</div><div class="kv-value">${escapeHtml(stationControlCurrent)}</div></div>
+        <div class="kv"><div class="kv-label">Temp CONTROL MAXIMA</div><div class="kv-value">${escapeHtml(stationControlMax)}</div></div>
+      </div>
+      <div class="station-separator"></div>
+      <div class="metrics-grid">
+        <div class="kv"><div class="kv-label">Temp CERCANA ACTUAL</div><div class="kv-value">${escapeHtml(stationNearbyCurrent)}</div></div>
+        <div class="kv"><div class="kv-label">Temp CERCANA MAXIMA</div><div class="kv-value">${escapeHtml(stationNearbyMax)}</div></div>
+      </div>
+      <div class="metrics-grid" style="margin-top:8px;">
+        <div class="kv"><div class="kv-label">Desviación ACTUAL (CONTROL - CERCANA)</div><div class="kv-value ${stationDeviationCurrent.cls}">${escapeHtml(stationDeviationCurrent.text)}</div></div>
+        <div class="kv"><div class="kv-label">Desviación MAXIMA (CONTROL - CERCANA)</div><div class="kv-value ${stationDeviationMax.cls}">${escapeHtml(stationDeviationMax.text)}</div></div>
+      </div>
+      ${stationCmp?.error ? `<div class="inline-note station-warning-item bad" style="margin-top:8px;">${escapeHtml(stationCmp.error)}</div>` : ''}
+      ${stationWarnings.length ? `
+        <div class="station-warning-list">
+          ${stationWarnings.map((w) => `<div class="station-warning-item ${w.includes('> 5°C') ? 'bad' : ''}">• ${escapeHtml(w)}</div>`).join('')}
+        </div>
+      ` : ''}
+      <div class="station-links">
+        ${stationControlUrl ? `<a class="market-link" href="${escapeHtml(stationControlUrl)}" target="_blank" rel="noopener">Estación CONTROL</a>` : '<span class="inline-note">Estación CONTROL: sin URL</span>'}
+        ${stationNearbyUrl ? `<a class="market-link" href="${escapeHtml(stationNearbyUrl)}" target="_blank" rel="noopener">Estación CERCANA</a>` : '<span class="inline-note">Estación CERCANA: sin URL</span>'}
+      </div>
     </section>
   `;
 
@@ -1776,6 +1851,7 @@ function renderDetail() {
   const bodyHtml = `
     <div class="detail-stack">
       ${headerHtml}
+      ${stationComparisonHtml}
       ${tabsHtml}
       <section class="detail-card">
         <div class="detail-topline">
@@ -1806,6 +1882,12 @@ function renderDetail() {
       if (!key) return;
       state.selectedHorizonKey = key;
       renderDetail();
+    });
+  });
+  el.detailBody.querySelectorAll('.js-refresh-station-comparison').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (!city?.id) return;
+      loadCityDetail(city.id);
     });
   });
   el.detailBody.querySelectorAll('.js-paper-buy').forEach((btn) => {

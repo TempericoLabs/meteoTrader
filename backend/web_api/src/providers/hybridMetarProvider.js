@@ -725,6 +725,263 @@ async function extractWundergroundHighTempActual(html, { cityId, metarCode, disp
   return { chosen, summary, currentCandidate };
 }
 
+function parseControlCurrentFromHeaderText(pageText, preferredUnit) {
+  const normalized = String(pageText || '').replace(/\s+/g, ' ').trim();
+  const todayIndex = normalized.search(/\bTODAY\b/i);
+  const slice = todayIndex >= 0
+    ? normalized.slice(Math.max(0, todayIndex - 280), Math.min(normalized.length, todayIndex + 150))
+    : normalized.slice(0, 420);
+  const regex = /(-?\d+(?:\.\d+)?)\s*(?:°|º)?\s*([CF])?\s*[A-Z0-9\-\s]{3,90}\s+STATION/i;
+  const m = slice.match(regex);
+  if (!m) return null;
+  const value = Number(m[1]);
+  if (!Number.isFinite(value)) return null;
+  const unit = m[2]
+    ? (String(m[2]).toUpperCase() === 'F' ? 'F' : 'C')
+    : inferUnitFromValue(value, preferredUnit);
+  return toWuCandidate(value, unit, 'control-current-header');
+}
+
+function findPwsCurrentFromStructuredText(text, preferredUnit, metarCode) {
+  const body = String(text || '');
+  const candidates = [];
+
+  const metricRegex = /"metric"\s*:\s*\{[^{}]{0,450}?"temp"\s*:\s*(-?\d+(?:\.\d+)?)/gi;
+  let match;
+  while ((match = metricRegex.exec(body)) !== null) {
+    const value = Number(match[1]);
+    const candidate = toWuCandidate(value, 'C', 'pws-current-metric', { score: 7 });
+    if (candidate) candidates.push(candidate);
+  }
+
+  const imperialRegex = /"imperial"\s*:\s*\{[^{}]{0,450}?"temp"\s*:\s*(-?\d+(?:\.\d+)?)/gi;
+  while ((match = imperialRegex.exec(body)) !== null) {
+    const value = Number(match[1]);
+    const candidate = toWuCandidate(value, 'F', 'pws-current-imperial', { score: 7 });
+    if (candidate) candidates.push(candidate);
+  }
+
+  const tempCRegex = /"temp_c"\s*:\s*(-?\d+(?:\.\d+)?)/gi;
+  while ((match = tempCRegex.exec(body)) !== null) {
+    const value = Number(match[1]);
+    const candidate = toWuCandidate(value, 'C', 'pws-current-temp_c', { score: 6 });
+    if (candidate) candidates.push(candidate);
+  }
+
+  const tempFRegex = /"temp_f"\s*:\s*(-?\d+(?:\.\d+)?)/gi;
+  while ((match = tempFRegex.exec(body)) !== null) {
+    const value = Number(match[1]);
+    const candidate = toWuCandidate(value, 'F', 'pws-current-temp_f', { score: 6 });
+    if (candidate) candidates.push(candidate);
+  }
+
+  const genericCurrent = findWundergroundAnyEmbeddedCurrentTemperature(body, preferredUnit, metarCode);
+  if (genericCurrent) {
+    candidates.push({ ...genericCurrent, score: Number(genericCurrent.score || 4) });
+  }
+
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => (b.score - a.score) || (b.valueC - a.valueC));
+  return candidates[0];
+}
+
+function parsePwsCurrentFromPageText(pageText, preferredUnit) {
+  const normalized = String(pageText || '').replace(/\s+/g, ' ').trim();
+  const regex = /CURRENT\s*CONDITIONS\s*(-?\d+(?:\.\d+)?)\s*(?:°|º)?\s*([CF])?/i;
+  const m = normalized.match(regex);
+  if (!m) return null;
+  const value = Number(m[1]);
+  if (!Number.isFinite(value)) return null;
+  const unit = m[2]
+    ? (String(m[2]).toUpperCase() === 'F' ? 'F' : 'C')
+    : inferUnitFromValue(value, preferredUnit);
+  return toWuCandidate(value, unit, 'pws-current-conditions');
+}
+
+function parsePwsSummaryHighTemp(pageText, preferredUnit) {
+  const normalized = String(pageText || '').replace(/\s+/g, ' ').trim();
+  const rowRegex = /Temperature\s*(-?\d+(?:\.\d+)?)\s*(?:°|º)?\s*([CF])?\s*(-?\d+(?:\.\d+)?)\s*(?:°|º)?\s*([CF])?\s*(-?\d+(?:\.\d+)?)/i;
+  const row = normalized.match(rowRegex);
+  if (row) {
+    const high = Number(row[1]);
+    const explicit = String(row[2] || '').toUpperCase();
+    const unit = explicit === 'F' ? 'F' : explicit === 'C' ? 'C' : inferUnitFromValue(high, preferredUnit);
+    const candidate = toWuCandidate(high, unit, 'pws-summary-history');
+    if (candidate) return candidate;
+  }
+
+  const historyIdx = normalized.search(/Weather\s+History/i);
+  if (historyIdx >= 0) {
+    const slice = normalized.slice(historyIdx, Math.min(normalized.length, historyIdx + 700));
+    const tempRegex = /Temperature\s*(-?\d+(?:\.\d+)?)\s*(?:°|º)?\s*([CF])?/i;
+    const m = slice.match(tempRegex);
+    if (m) {
+      const high = Number(m[1]);
+      const explicit = String(m[2] || '').toUpperCase();
+      const unit = explicit === 'F' ? 'F' : explicit === 'C' ? 'C' : inferUnitFromValue(high, preferredUnit);
+      const candidate = toWuCandidate(high, unit, 'pws-summary-slice');
+      if (candidate) return candidate;
+    }
+  }
+  return null;
+}
+
+function toStationTemp(valueCandidate) {
+  if (!valueCandidate || !Number.isFinite(valueCandidate.valueC)) {
+    return { tempC: null, tempF: null, error: 'No se pudo obtener dato' };
+  }
+  return {
+    tempC: valueCandidate.valueC,
+    tempF: celsiusToFahrenheit(valueCandidate.valueC),
+    error: null
+  };
+}
+
+function wuCandidateValueC(candidate) {
+  if (!candidate) return null;
+  if (Number.isFinite(candidate.valueC)) return candidate.valueC;
+  if (Number.isFinite(candidate.value)) {
+    return String(candidate.unit || 'C').toUpperCase() === 'F'
+      ? fahrenheitToCelsius(candidate.value)
+      : candidate.value;
+  }
+  return null;
+}
+
+async function fetchWundergroundStationComparisonSnapshot(cityId, displayUnit, metarCode) {
+  const cfg = WUNDERGROUND_BY_CITY[cityId];
+  if (!cfg) {
+    return {
+      controlSourceUrl: null,
+      nearbySourceUrl: null,
+      controlCurrent: { tempC: null, tempF: null, error: 'No se pudo obtener dato' },
+      controlMax: { tempC: null, tempF: null, error: 'No se pudo obtener dato' },
+      nearbyCurrent: { tempC: null, tempF: null, error: 'No se pudo obtener dato' },
+      nearbyMax: { tempC: null, tempF: null, error: 'No se pudo obtener dato' },
+      deviationCurrentC: null,
+      deviationMaxC: null,
+      isCurrentDeviationReliable: false,
+      isMaxDeviationReliable: false,
+      warnings: ['Ciudad sin URL Wunderground configurada'],
+      error: 'No se pudo obtener dato'
+    };
+  }
+
+  const warnings = [];
+
+  const [controlHtml, nearbyHtml] = await Promise.all([
+    fetchHtml(cfg.controlUrl),
+    fetchHtml(cfg.pwsUrl)
+  ]);
+
+  let controlCurrentCandidate = null;
+  let controlMaxCandidate = null;
+  let controlSourceUrl = controlHtml.url || cfg.controlUrl;
+
+  if (controlHtml.ok) {
+    const pageText = stripHtmlToText(controlHtml.body);
+    const scriptsText = extractInlineScriptsText(controlHtml.body);
+    const extracted = await extractWundergroundHighTempActual(controlHtml.body, {
+      cityId,
+      metarCode,
+      displayUnit,
+      pageUrl: controlHtml.url || cfg.controlUrl
+    });
+    controlCurrentCandidate =
+      parseControlCurrentFromHeaderText(pageText, displayUnit)
+      || findWundergroundAnyEmbeddedCurrentTemperature(scriptsText, displayUnit, metarCode);
+    controlMaxCandidate =
+      extracted.summary
+      || extracted.currentCandidate
+      || extracted.chosen
+      || parseWundergroundSummaryHighTemp(pageText, displayUnit);
+    const controlCurrentC = wuCandidateValueC(controlCurrentCandidate);
+    const controlMaxC = wuCandidateValueC(controlMaxCandidate);
+    if (Number.isFinite(controlCurrentC) && Number.isFinite(controlMaxC) && (controlCurrentC - controlMaxC) > 5) {
+      warnings.push(`Control: temperatura actual descartada por inconsistencia (+${(controlCurrentC - controlMaxC).toFixed(1)}°C sobre máxima)`);
+      controlCurrentCandidate = null;
+    }
+    if (!controlCurrentCandidate) warnings.push('Control: no se detectó temperatura actual');
+    if (!controlMaxCandidate) warnings.push('Control: no se detectó máxima diaria');
+  } else {
+    warnings.push(`Control: ${controlHtml.error || 'sin respuesta HTML'}`);
+    controlSourceUrl = cfg.controlUrl;
+  }
+
+  let nearbyCurrentCandidate = null;
+  let nearbyMaxCandidate = null;
+  let nearbySourceUrl = nearbyHtml.url || cfg.pwsUrl;
+
+  if (nearbyHtml.ok) {
+    const pageText = stripHtmlToText(nearbyHtml.body);
+    const scriptsText = extractInlineScriptsText(nearbyHtml.body);
+    const extracted = await extractWundergroundHighTempActual(nearbyHtml.body, {
+      cityId,
+      metarCode,
+      displayUnit,
+      pageUrl: nearbyHtml.url || cfg.pwsUrl
+    });
+    nearbyCurrentCandidate =
+      parsePwsCurrentFromPageText(pageText, displayUnit)
+      || findPwsCurrentFromStructuredText(scriptsText, displayUnit, metarCode);
+    nearbyMaxCandidate =
+      parsePwsSummaryHighTemp(pageText, displayUnit)
+      || extracted.summary
+      || extracted.currentCandidate
+      || extracted.chosen;
+    const nearbyCurrentC = wuCandidateValueC(nearbyCurrentCandidate);
+    const nearbyMaxC = wuCandidateValueC(nearbyMaxCandidate);
+    if (Number.isFinite(nearbyCurrentC) && Number.isFinite(nearbyMaxC) && (nearbyCurrentC - nearbyMaxC) > 5) {
+      warnings.push(`Cercana: temperatura actual descartada por inconsistencia (+${(nearbyCurrentC - nearbyMaxC).toFixed(1)}°C sobre máxima)`);
+      nearbyCurrentCandidate = null;
+    }
+    if (!nearbyCurrentCandidate) warnings.push('Cercana: no se detectó temperatura actual');
+    if (!nearbyMaxCandidate) warnings.push('Cercana: no se detectó máxima diaria');
+  } else {
+    warnings.push(`Cercana: ${nearbyHtml.error || 'sin respuesta HTML'}`);
+    nearbySourceUrl = cfg.pwsUrl;
+  }
+
+  const controlCurrent = toStationTemp(controlCurrentCandidate);
+  const controlMax = toStationTemp(controlMaxCandidate);
+  const nearbyCurrent = toStationTemp(nearbyCurrentCandidate);
+  const nearbyMax = toStationTemp(nearbyMaxCandidate);
+
+  const deviationCurrentC = Number.isFinite(controlCurrent.tempC) && Number.isFinite(nearbyCurrent.tempC)
+    ? controlCurrent.tempC - nearbyCurrent.tempC
+    : null;
+  const deviationMaxC = Number.isFinite(controlMax.tempC) && Number.isFinite(nearbyMax.tempC)
+    ? controlMax.tempC - nearbyMax.tempC
+    : null;
+
+  const isCurrentDeviationReliable = Number.isFinite(deviationCurrentC) ? Math.abs(deviationCurrentC) <= 5 : false;
+  const isMaxDeviationReliable = Number.isFinite(deviationMaxC) ? Math.abs(deviationMaxC) <= 5 : false;
+
+  if (Number.isFinite(deviationCurrentC) && !isCurrentDeviationReliable) {
+    warnings.push(`Desviación ACTUAL fuera de rango (>5°C): ${deviationCurrentC.toFixed(1)}°C`);
+  }
+  if (Number.isFinite(deviationMaxC) && !isMaxDeviationReliable) {
+    warnings.push(`Desviación MAXIMA fuera de rango (>5°C): ${deviationMaxC.toFixed(1)}°C`);
+  }
+
+  const allMissing = [controlCurrent.tempC, controlMax.tempC, nearbyCurrent.tempC, nearbyMax.tempC].every((x) => !Number.isFinite(x));
+
+  return {
+    controlSourceUrl,
+    nearbySourceUrl,
+    controlCurrent,
+    controlMax,
+    nearbyCurrent,
+    nearbyMax,
+    deviationCurrentC: Number.isFinite(deviationCurrentC) ? deviationCurrentC : null,
+    deviationMaxC: Number.isFinite(deviationMaxC) ? deviationMaxC : null,
+    isCurrentDeviationReliable,
+    isMaxDeviationReliable,
+    warnings,
+    error: allMissing ? 'No se pudo obtener dato' : null
+  };
+}
+
 function chooseHigherTempCandidate(...candidates) {
   const normalized = candidates.filter(Boolean).map((c) => {
     const valueC = c.valueC ?? (c.unit === 'C' ? c.value : fahrenheitToCelsius(c.value));
@@ -2196,13 +2453,45 @@ function overlayCitySummary(baseCity, metarSnapshot, controlSnapshot = null, for
   return city;
 }
 
-function overlayCityDetail(baseCity, metarSnapshot, controlSnapshot = null, forecastSnapshot = null, mmaForecast = null) {
+function overlayCityDetail(
+  baseCity,
+  metarSnapshot,
+  controlSnapshot = null,
+  forecastSnapshot = null,
+  mmaForecast = null,
+  stationComparisonSnapshot = null
+) {
   const city = overlayCitySummary(baseCity, metarSnapshot, controlSnapshot, forecastSnapshot, mmaForecast);
+  const displayUnit = city.city.displayUnit;
+
+  if (stationComparisonSnapshot) {
+    city.stationComparison = {
+      cityId: city.city.id,
+      cityName: city.city.name,
+      metarCode: city.city.metarCode,
+      zoneId: city.city.zoneId,
+      localTime: city.localTime,
+      fetchedAtUtc: new Date().toISOString(),
+      displayUnit,
+      controlSourceUrl: stationComparisonSnapshot.controlSourceUrl || city.city.wundergroundControlUrl || null,
+      nearbySourceUrl: stationComparisonSnapshot.nearbySourceUrl || city.city.wundergroundPwsUrl || null,
+      controlCurrent: deepClone(stationComparisonSnapshot.controlCurrent),
+      controlMax: deepClone(stationComparisonSnapshot.controlMax),
+      nearbyCurrent: deepClone(stationComparisonSnapshot.nearbyCurrent),
+      nearbyMax: deepClone(stationComparisonSnapshot.nearbyMax),
+      deviationCurrentC: stationComparisonSnapshot.deviationCurrentC,
+      deviationMaxC: stationComparisonSnapshot.deviationMaxC,
+      isCurrentDeviationReliable: !!stationComparisonSnapshot.isCurrentDeviationReliable,
+      isMaxDeviationReliable: !!stationComparisonSnapshot.isMaxDeviationReliable,
+      warnings: deepClone(stationComparisonSnapshot.warnings || []),
+      error: stationComparisonSnapshot.error || null
+    };
+  }
+
   if (!metarSnapshot?.current || metarSnapshot.current.tempC == null) {
     return city;
   }
 
-  const displayUnit = city.city.displayUnit;
   const currentDisplay = toTempDisplays(metarSnapshot.current.tempC, displayUnit);
   const prevDisplay = metarSnapshot.previous?.tempC != null
     ? toTempDisplays(metarSnapshot.previous.tempC, displayUnit)
@@ -2238,16 +2527,26 @@ export function createHybridMetarProvider({ baseProvider = createMockProvider() 
   const detailCache = new Map();
   const detailInflight = new Map();
 
-  async function buildComputedCityDetail(cityId, { premiumMode = 'cache-only' } = {}) {
+  async function buildComputedCityDetail(cityId, { premiumMode = 'cache-only', includeStationComparison = false } = {}) {
     const baseCity = await baseProvider.getCityDetail(cityId);
     if (!baseCity) return null;
-    const [metarSnapshot, controlSnapshot, forecastSnapshot] = await Promise.all([
+    const [metarSnapshot, controlSnapshot, forecastSnapshot, stationComparisonSnapshot] = await Promise.all([
       fetchMetarSnapshot(baseCity.city.metarCode),
       fetchWundergroundControlSnapshot(cityId, baseCity.city.displayUnit, baseCity.city.metarCode),
-      fetchOpenMeteoMmSnapshot(cityId, baseCity.city.zoneId)
+      fetchOpenMeteoMmSnapshot(cityId, baseCity.city.zoneId),
+      includeStationComparison
+        ? fetchWundergroundStationComparisonSnapshot(cityId, baseCity.city.displayUnit, baseCity.city.metarCode)
+        : Promise.resolve(null)
     ]);
     const mmaForecast = await computeWeightedMmaFromForecast(cityId, baseCity.city.zoneId, forecastSnapshot, { premiumMode });
-    let cityDetail = overlayCityDetail(baseCity, metarSnapshot, controlSnapshot, forecastSnapshot, mmaForecast);
+    let cityDetail = overlayCityDetail(
+      baseCity,
+      metarSnapshot,
+      controlSnapshot,
+      forecastSnapshot,
+      mmaForecast,
+      stationComparisonSnapshot
+    );
     try {
       const board = await fetchPolymarketBoardsForCity({
         id: cityDetail.city.id,
@@ -2265,8 +2564,11 @@ export function createHybridMetarProvider({ baseProvider = createMockProvider() 
     return cityDetail;
   }
 
-  async function getComputedCityDetailCached(cityId, { cacheScope = 'summary', premiumMode = 'cache-only' } = {}) {
-    const cacheKey = `${cacheScope}:${cityId}`;
+  async function getComputedCityDetailCached(
+    cityId,
+    { cacheScope = 'summary', premiumMode = 'cache-only', includeStationComparison = false } = {}
+  ) {
+    const cacheKey = `${cacheScope}:${cityId}:sc=${includeStationComparison ? '1' : '0'}`;
     const now = Date.now();
     const cached = detailCache.get(cacheKey);
     if (cached && now - cached.ts <= DETAIL_CACHE_TTL_MS) {
@@ -2277,7 +2579,7 @@ export function createHybridMetarProvider({ baseProvider = createMockProvider() 
       return inflightValue ? deepClone(inflightValue) : null;
     }
     const p = (async () => {
-      const value = await buildComputedCityDetail(cityId, { premiumMode });
+      const value = await buildComputedCityDetail(cityId, { premiumMode, includeStationComparison });
       if (value) {
         detailCache.set(cacheKey, { ts: Date.now(), value: deepClone(value) });
       }
@@ -2327,7 +2629,11 @@ export function createHybridMetarProvider({ baseProvider = createMockProvider() 
     },
 
     async getCitySummary(cityId) {
-      const detail = await getComputedCityDetailCached(cityId, { cacheScope: 'summary', premiumMode: 'cache-only' });
+      const detail = await getComputedCityDetailCached(cityId, {
+        cacheScope: 'summary',
+        premiumMode: 'cache-only',
+        includeStationComparison: false
+      });
       return detail ? toCitySummaryPayload(detail) : null;
     },
 
@@ -2341,7 +2647,11 @@ export function createHybridMetarProvider({ baseProvider = createMockProvider() 
     },
 
     async getCityDetail(cityId) {
-      return getComputedCityDetailCached(cityId, { cacheScope: 'detail', premiumMode: 'ensure' });
+      return getComputedCityDetailCached(cityId, {
+        cacheScope: 'detail',
+        premiumMode: 'ensure',
+        includeStationComparison: true
+      });
     }
   };
 }
